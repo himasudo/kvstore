@@ -1,8 +1,16 @@
 CXX = g++
 CXXFLAGS = -std=c++17 -Wall -Wextra -Werror -g
 
-all:
-	$(CXX) $(CXXFLAGS) src/main.cpp -o kvstore
+SRC = src/main.cpp src/kvstore.cpp
+OBJ = $(SRC:.cpp=.o)
+
+all: kvstore
+
+kvstore: $(OBJ)
+	$(CXX) $(CXXFLAGS) -o kvstore $(OBJ)
+
+%.o: %.cpp
+	$(CXX) $(CXXFLAGS) -I include -c $< -o $@
 
 clean:
-	rm -f kvstore
+	rm -f $(OBJ)
