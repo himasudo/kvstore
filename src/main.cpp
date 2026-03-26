@@ -9,13 +9,17 @@ int main() {
     store.set("Doe", "online");
     store.set("Mike", "online");
 
+    std::cout << std::boolalpha;
     std::cout << "size of kvstore: " << store.size() << std::endl;
+    bool val_exists = store.exists("Himanshu");
+    std::cout << "Does key Himanshu exists??: " << val_exists << std::endl;
     auto result = store.get("Himanshu");
     if (result) {
         std::cout << "Himanshu status: " << *result << std::endl;
     } else {
         std::cout << "Himanshu: not found" << std::endl;
     }
+    std::cout << "Store Keys count: " << store.keys().size() << std::endl;
     bool deleted_john = store.del("John");
     std::cout << "John deleted: " << deleted_john << std::endl;
 
@@ -25,5 +29,8 @@ int main() {
     } else {
         std::cout << "John: not found" << std::endl;
     }
+    std::cout << "Delete all mappings from store" << std::endl;
+    store.clear();
+    std::cout << "Keys in the store: " << store.keys().size() << std::endl;
     return 0;
 }
