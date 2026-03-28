@@ -2,10 +2,10 @@
 
 
 void KVStore::set(const std::string &key, const std::string &value) {
-    store_[key] = value;
+    store_.insert_or_assign(std::move(key), std::move(value));
 }
 
-std::optional<std::string> KVStore::get(const std::string &key) const {
+std::optional<std::string> KVStore::get(std::string_view key) const {
     auto it = store_.find(key);
     if (it != store_.end()) {
         return it->second;
@@ -17,11 +17,16 @@ size_t KVStore::size() const {
     return store_.size();
 }
 
-bool KVStore::del(const std::string &key) {
-    return store_.erase(key) > 0;
+bool KVStore::del(std::string_view key) {
+    auto it = store_.find(key);
+    if (it !=store_.end()) {
+        store_.erase(it);
+        return true;
+    }
+    return false;
 }
 
-bool KVStore::exists(const std::string &key) const {
+bool KVStore::exists(std::string_view key) const {
     auto it = store_.find(key);
     return it != store_.end();
 }
