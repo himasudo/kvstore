@@ -1,7 +1,7 @@
 #include "kvstore.h"
 
 
-void KVStore::set(const std::string &key, const std::string &value) {
+void KVStore::set(std::string key, std::string value) {
     store_.insert_or_assign(std::move(key), std::move(value));
 }
 
@@ -19,7 +19,7 @@ size_t KVStore::size() const {
 
 bool KVStore::del(std::string_view key) {
     auto it = store_.find(key);
-    if (it !=store_.end()) {
+    if (it != store_.end()) {
         store_.erase(it);
         return true;
     }
@@ -27,8 +27,7 @@ bool KVStore::del(std::string_view key) {
 }
 
 bool KVStore::exists(std::string_view key) const {
-    auto it = store_.find(key);
-    return it != store_.end();
+     return store_.contains(key);
 }
 
 std::vector<std::string> KVStore::keys() const {
