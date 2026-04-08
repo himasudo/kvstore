@@ -1,7 +1,7 @@
 CXX = g++
-CXXFLAGS = -std=c++20 -Wall -Wextra -Werror -g
+CXXFLAGS = -std=c++23 -Wall -Wextra -Werror -g
 
-SRC = src/main.cpp src/kvstore.cpp
+SRC = src/main.cpp src/kvstore.cpp src/parser.cpp
 OBJ = $(SRC:.cpp=.o)
 
 all: kvstore
