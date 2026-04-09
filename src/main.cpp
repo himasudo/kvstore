@@ -2,12 +2,15 @@
 #include <vector>
 #include <string>
 #include <string_view>
+#include <variant>
+#include <type_traits>
+
 #include "parser.h"
 #include "kvstore.h"
+#include "dispatcher.h"
 
 /**
  * Converts the Command::Type enum to a string for display.
- * This is used to verify that the parser correctly identified the command.
  */
 std::string commandTypeToString(Command::Type type) {
     switch (type) {
@@ -23,13 +26,38 @@ std::string commandTypeToString(Command::Type type) {
 }
 
 /**
- * Helper to run the parser against a raw protocol string and print results.
+ * Helper to print the std::variant inside the DispatchResult using std::visit.
  */
-void run_parser_test(const std::string& name, std::string_view input) {
+void printDispatchResultData(const Dispatcher::DispatchResult::value_type& val) {
+    std::visit([](const auto& v) {
+        using T = std::decay_t<decltype(v)>;
+        
+        if constexpr (std::is_same_v<T, std::monostate>) {
+            std::cout << "(OK / Empty)\n";
+        } else if constexpr (std::is_same_v<T, bool>) {
+            std::cout << (v ? "true" : "false") << "\n";
+        } else if constexpr (std::is_same_v<T, int>) {
+            std::cout << v << "\n";
+        } else if constexpr (std::is_same_v<T, std::string>) {
+            std::cout << "\"" << v << "\"\n";
+        } else if constexpr (std::is_same_v<T, std::vector<std::string>>) {
+            std::cout << "[";
+            for (size_t i = 0; i < v.size(); ++i) {
+                std::cout << "\"" << v[i] << "\"" << (i + 1 < v.size() ? ", " : "");
+            }
+            std::cout << "]\n";
+        }
+    }, val);
+}
+
+/**
+ * Helper to run the parser and dispatcher pipeline.
+ */
+void run_pipeline_test(const std::string& name, std::string_view input, Dispatcher& dispatcher) {
     std::cout << ">>> Test: " << name << " <<<\n";
     
     // Formatting the input string so \r\n is visible in the console output
-    std::string visual_input(input);
+    std::string visual_input(input.data(), input.size());
     size_t pos = 0;
     while ((pos = visual_input.find("\r\n", pos)) != std::string::npos) {
         visual_input.replace(pos, 2, "\\r\\n");
@@ -37,47 +65,66 @@ void run_parser_test(const std::string& name, std::string_view input) {
     }
     std::cout << "Raw Input: " << visual_input << "\n";
     
-    auto result = parse(input);
+    // Step 1: Parse
+    auto parse_result = parse(input);
 
-    if (result) {
-        std::cout << "Status:  SUCCESS\n";
-        std::cout << "Command: " << commandTypeToString(result->type) << "\n";
-        std::cout << "Args:    ";
-        if (result->args.empty()) {
-            std::cout << "(none)";
-        } else {
-            for (const auto& arg : result->args) {
-                std::cout << "[" << arg << "] ";
-            }
-        }
-        std::cout << "\n";
-    } else {
-        std::cout << "Status:  FAILURE\n";
-        std::cout << "Reason:  " << result.error() << "\n";
+    if (!parse_result) {
+        std::cout << "Parser Status:   FAILURE\n";
+        std::cout << "Parser Reason:   " << parse_result.error() << "\n";
+        std::cout << "-------------------------------------------\n\n";
+        return; // Stop here if parsing fails
     }
+
+    std::cout << "Parser Status:   SUCCESS (" << commandTypeToString(parse_result->type) << ")\n";
+
+    // Step 2: Dispatch
+    auto dispatch_result = dispatcher.dispatch(*parse_result);
+
+    if (!dispatch_result) {
+        std::cout << "Dispatch Status: FAILURE\n";
+        std::cout << "Dispatch Reason: " << dispatch_result.error() << "\n";
+    } else {
+        std::cout << "Dispatch Status: SUCCESS\n";
+        std::cout << "Result Data:     ";
+        printDispatchResultData(dispatch_result.value());
+    }
+    
     std::cout << "-------------------------------------------\n\n";
 }
 
 int main() {
-    std::cout << "--- Starting KVStore Protocol Parser Verification ---\n\n";
+    std::cout << "--- Starting KVStore Pipeline Verification ---\n\n";
 
-    // Valid: SET foo bar (*3 tokens: SET, foo, bar)
-    run_parser_test("Valid SET foo bar", "*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n");
+    // Initialize our core components
+    KVStore kvstore;
+    Dispatcher dispatcher(kvstore);
 
-    // Valid: GET foo (*2 tokens: GET, foo)
-    run_parser_test("Valid GET foo", "*2\r\n$3\r\nGET\r\n$3\r\nfoo\r\n");
+    // --- SUCCESS CASES ---
+    
+    // Valid: SET foo bar
+    run_pipeline_test("Valid SET foo bar", "*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n", dispatcher);
 
-    // Valid: SIZE (*1 token: SIZE)
-    run_parser_test("Valid SIZE", "*1\r\n$4\r\nSIZE\r\n");
+    // Valid: GET foo (Should return "bar" now that we set it!)
+    run_pipeline_test("Valid GET foo", "*2\r\n$3\r\nGET\r\n$3\r\nfoo\r\n", dispatcher);
 
-    // Invalid: Missing * prefix
-    run_parser_test("Missing * prefix", "3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n");
+    // Valid: SIZE (Should return 1)
+    run_pipeline_test("Valid SIZE", "*1\r\n$4\r\nSIZE\r\n", dispatcher);
 
-    // Invalid: Wrong arg count (*3 declared, but only 2 tokens provided)
-    run_parser_test("Wrong arg count (*3 but only 2 found)", "*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n");
+    // --- DISPATCHER ERROR CASES ---
 
-    // Invalid: Unknown command string
-    run_parser_test("Unknown command (MAGIC)", "*1\r\n$5\r\nMAGIC\r\n");
+    // Invalid Dispatch: SET with only 1 argument (*2 tokens: SET, foo)
+    run_pipeline_test("Dispatcher Error: SET missing value", "*2\r\n$3\r\nSET\r\n$3\r\nfoo\r\n", dispatcher);
+
+    // Invalid Dispatch: GET missing key (*1 token: GET)
+    run_pipeline_test("Dispatcher Error: GET missing key", "*1\r\n$3\r\nGET\r\n", dispatcher);
+
+    // --- PARSER ERROR CASES ---
+
+    // Invalid Parse: Missing * prefix
+    run_pipeline_test("Parser Error: Missing * prefix", "3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n", dispatcher);
+
+    // Invalid Parse: Unknown command string
+    run_pipeline_test("Parser Error: Unknown command (MAGIC)", "*1\r\n$5\r\nMAGIC\r\n", dispatcher);
 
     return 0;
 }

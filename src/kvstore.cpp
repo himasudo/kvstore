@@ -33,7 +33,7 @@ bool KVStore::exists(std::string_view key) const {
 std::vector<std::string> KVStore::keys() const {
     std::vector<std::string> store_keys;
     store_keys.reserve(store_.size());
-    for(const auto &pair: store_) {
+    for(const auto& pair: store_) {
         store_keys.push_back(pair.first);
     }
     return store_keys;
