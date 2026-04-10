@@ -9,8 +9,8 @@ persistence via a write-ahead log.
 
 ## Status
 
-Active development. Currently completing the protocol layer (parser, dispatcher,
-encoder). Networking and concurrency layers are next.
+Active development. Protocol layer complete (parser, dispatcher, encoder).
+Networking layer next.
 
 ## Architecture
 
