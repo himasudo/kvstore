@@ -5,7 +5,7 @@ Dispatcher::DispatchResult Dispatcher::dispatch(const Command& command) {
         case Command::Type::SET:
             if (command.args.size() != 2) return std::unexpected("Error[Dispatcher Error]: SET requires a key and a value argument");
             kvstore_.set(command.args[0], command.args[1]);
-            return std::monostate{};
+            return Void{};
 
         case Command::Type::GET: {
             if (command.args.empty()) return std::unexpected("Error[Dispatcher Error]: GET requires a key");
@@ -33,7 +33,7 @@ Dispatcher::DispatchResult Dispatcher::dispatch(const Command& command) {
 
         case Command::Type::CLEAR:
             kvstore_.clear();
-            return std::monostate{};
+            return Void{};
 
         default:
             return std::unexpected("Error[Dispatcher Error] Unknown command type");

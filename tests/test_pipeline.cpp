@@ -8,6 +8,7 @@
 #include "parser.h"
 #include "kvstore.h"
 #include "dispatcher.h"
+#include "encoder.h"
 
 /**
  * Converts the Command::Type enum to a string for display.
@@ -32,7 +33,10 @@ void printDispatchResultData(const Dispatcher::DispatchResult::value_type& val) 
     std::visit([](const auto& v) {
         using T = std::decay_t<decltype(v)>;
         
-        if constexpr (std::is_same_v<T, std::monostate>) {
+        // Uncommented the Void check since you added it to your encoder!
+        if constexpr (std::is_same_v<T, Void>) {
+            std::cout << "(Void / Success)\n";
+        } else if constexpr (std::is_same_v<T, std::monostate>) {
             std::cout << "(OK / Empty)\n";
         } else if constexpr (std::is_same_v<T, bool>) {
             std::cout << (v ? "true" : "false") << "\n";
@@ -51,7 +55,7 @@ void printDispatchResultData(const Dispatcher::DispatchResult::value_type& val) 
 }
 
 /**
- * Helper to run the parser and dispatcher pipeline.
+ * Helper to run the parser, dispatcher, and encoder pipeline.
  */
 void run_pipeline_test(const std::string& name, std::string_view input, Dispatcher& dispatcher) {
     std::cout << ">>> Test: " << name << " <<<\n";
@@ -63,7 +67,7 @@ void run_pipeline_test(const std::string& name, std::string_view input, Dispatch
         visual_input.replace(pos, 2, "\\r\\n");
         pos += 4;
     }
-    std::cout << "Raw Input: " << visual_input << "\n";
+    std::cout << "Raw Input:       " << visual_input << "\n";
     
     // Step 1: Parse
     auto parse_result = parse(input);
@@ -72,7 +76,7 @@ void run_pipeline_test(const std::string& name, std::string_view input, Dispatch
         std::cout << "Parser Status:   FAILURE\n";
         std::cout << "Parser Reason:   " << parse_result.error() << "\n";
         std::cout << "-------------------------------------------\n\n";
-        return; // Stop here if parsing fails
+        return; 
     }
 
     std::cout << "Parser Status:   SUCCESS (" << commandTypeToString(parse_result->type) << ")\n";
@@ -88,42 +92,81 @@ void run_pipeline_test(const std::string& name, std::string_view input, Dispatch
         std::cout << "Result Data:     ";
         printDispatchResultData(dispatch_result.value());
     }
-    
+
+    // Step 3: Encode
+    std::string encoded_output = encode(dispatch_result);
+
+    // Escape \r\n in the encoder output for easy reading in the console
+    std::string visual_encoded = encoded_output;
+    size_t pos_enc = 0;
+    while ((pos_enc = visual_encoded.find("\r\n", pos_enc)) != std::string::npos) {
+        visual_encoded.replace(pos_enc, 2, "\\r\\n");
+        pos_enc += 4;
+    }
+
+    std::cout << "Encoder Output:  " << visual_encoded << "\n";
     std::cout << "-------------------------------------------\n\n";
 }
 
 int main() {
     std::cout << "--- Starting KVStore Pipeline Verification ---\n\n";
 
-    // Initialize our core components
     KVStore kvstore;
     Dispatcher dispatcher(kvstore);
 
-    // --- SUCCESS CASES ---
+    // --- 1. POPULATE STORE ---
     
-    // Valid: SET foo bar
+    // SET foo bar (Should encode as "v\r\n")
     run_pipeline_test("Valid SET foo bar", "*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n", dispatcher);
+    
+    // SET hello world (Add a second key to test KEYS properly)
+    run_pipeline_test("Valid SET hello world", "*3\r\n$3\r\nSET\r\n$5\r\nhello\r\n$5\r\nworld\r\n", dispatcher);
 
-    // Valid: GET foo (Should return "bar" now that we set it!)
+    // --- 2. READ OPERATIONS ---
+
+    // GET foo (Should encode as "s3\r\nbar\r\n")
     run_pipeline_test("Valid GET foo", "*2\r\n$3\r\nGET\r\n$3\r\nfoo\r\n", dispatcher);
+    
+    // GET fee (Missing key, should encode as "n\r\n")
+    run_pipeline_test("Valid GET fee (Not Found)", "*2\r\n$3\r\nGET\r\n$3\r\nfee\r\n", dispatcher);
 
-    // Valid: SIZE (Should return 1)
-    run_pipeline_test("Valid SIZE", "*1\r\n$4\r\nSIZE\r\n", dispatcher);
+    // EXISTS foo (True, should encode as "b1\r\n")
+    run_pipeline_test("Valid EXISTS foo (True)", "*2\r\n$6\r\nEXISTS\r\n$3\r\nfoo\r\n", dispatcher);
+    
+    // EXISTS fake (False, should encode as "b0\r\n")
+    run_pipeline_test("Valid EXISTS fake (False)", "*2\r\n$6\r\nEXISTS\r\n$4\r\nfake\r\n", dispatcher);
 
-    // --- DISPATCHER ERROR CASES ---
+    // SIZE (Should be 2, encode as "i1\r\n2\r\n")
+    run_pipeline_test("Valid SIZE (Expect 2)", "*1\r\n$4\r\nSIZE\r\n", dispatcher);
 
-    // Invalid Dispatch: SET with only 1 argument (*2 tokens: SET, foo)
+    // KEYS (Should return list of "foo" and "hello")
+    run_pipeline_test("Valid KEYS", "*1\r\n$4\r\nKEYS\r\n", dispatcher);
+
+    // --- 3. DELETE & CLEAR OPERATIONS ---
+
+    // DEL foo (True, should encode as "b1\r\n")
+    run_pipeline_test("Valid DEL foo (Success)", "*2\r\n$3\r\nDEL\r\n$3\r\nfoo\r\n", dispatcher);
+    
+    // DEL foo AGAIN (False, should encode as "b0\r\n")
+    run_pipeline_test("Valid DEL foo (Already Deleted)", "*2\r\n$3\r\nDEL\r\n$3\r\nfoo\r\n", dispatcher);
+
+    // CLEAR (Should encode as "v\r\n")
+    run_pipeline_test("Valid CLEAR", "*1\r\n$5\r\nCLEAR\r\n", dispatcher);
+    
+    // SIZE after CLEAR (Should be 0, encode as "i1\r\n0\r\n")
+    run_pipeline_test("Valid SIZE (Expect 0 after CLEAR)", "*1\r\n$4\r\nSIZE\r\n", dispatcher);
+
+    // --- 4. DISPATCHER ERROR CASES ---
+
+    // Invalid Dispatch: SET missing value (Should encode as "eX\r\nError...\r\n")
     run_pipeline_test("Dispatcher Error: SET missing value", "*2\r\n$3\r\nSET\r\n$3\r\nfoo\r\n", dispatcher);
 
-    // Invalid Dispatch: GET missing key (*1 token: GET)
+    // Invalid Dispatch: GET missing key
     run_pipeline_test("Dispatcher Error: GET missing key", "*1\r\n$3\r\nGET\r\n", dispatcher);
 
-    // --- PARSER ERROR CASES ---
+    // --- 5. PARSER ERROR CASES ---
 
-    // Invalid Parse: Missing * prefix
     run_pipeline_test("Parser Error: Missing * prefix", "3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n", dispatcher);
-
-    // Invalid Parse: Unknown command string
     run_pipeline_test("Parser Error: Unknown command (MAGIC)", "*1\r\n$5\r\nMAGIC\r\n", dispatcher);
 
     return 0;

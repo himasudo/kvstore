@@ -7,13 +7,14 @@
 #include "kvstore.h"
 #include "command.h"
 
+struct Void {};
 
 class Dispatcher {
     private:
         KVStore& kvstore_;
     public:
         Dispatcher(KVStore& kvstore): kvstore_(kvstore) {};
-        using ResultValue = std::variant<std::monostate, bool, int, std::string, std::vector<std::string>>;
+        using ResultValue = std::variant<std::monostate, Void, bool, int, std::string, std::vector<std::string>>;
         using DispatchResult = std::expected<ResultValue, std::string>;
         DispatchResult dispatch(const Command& command);
 
