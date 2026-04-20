@@ -37,7 +37,7 @@ void printDispatchResultData(const Dispatcher::DispatchResult::value_type& val) 
         if constexpr (std::is_same_v<T, Void>) {
             std::cout << "(Void / Success)\n";
         } else if constexpr (std::is_same_v<T, std::monostate>) {
-            std::cout << "(OK / Empty)\n";
+            std::cout << "(Null / Not Found)\n";
         } else if constexpr (std::is_same_v<T, bool>) {
             std::cout << (v ? "true" : "false") << "\n";
         } else if constexpr (std::is_same_v<T, int>) {
@@ -116,52 +116,52 @@ int main() {
 
     // --- 1. POPULATE STORE ---
     
-    // SET foo bar (Should encode as "v\r\n")
+    // SET foo bar → +OK\r\n
     run_pipeline_test("Valid SET foo bar", "*3\r\n$3\r\nSET\r\n$3\r\nfoo\r\n$3\r\nbar\r\n", dispatcher);
     
-    // SET hello world (Add a second key to test KEYS properly)
+    // SET hello world → +OK\r\n
     run_pipeline_test("Valid SET hello world", "*3\r\n$3\r\nSET\r\n$5\r\nhello\r\n$5\r\nworld\r\n", dispatcher);
 
     // --- 2. READ OPERATIONS ---
 
-    // GET foo (Should encode as "s3\r\nbar\r\n")
+    // GET foo → $3\r\nbar\r\n
     run_pipeline_test("Valid GET foo", "*2\r\n$3\r\nGET\r\n$3\r\nfoo\r\n", dispatcher);
     
-    // GET fee (Missing key, should encode as "n\r\n")
+    // GET fee (missing) → $-1\r\n
     run_pipeline_test("Valid GET fee (Not Found)", "*2\r\n$3\r\nGET\r\n$3\r\nfee\r\n", dispatcher);
 
-    // EXISTS foo (True, should encode as "b1\r\n")
+    // EXISTS foo → :1\r\n
     run_pipeline_test("Valid EXISTS foo (True)", "*2\r\n$6\r\nEXISTS\r\n$3\r\nfoo\r\n", dispatcher);
     
-    // EXISTS fake (False, should encode as "b0\r\n")
+    // EXISTS fake → :0\r\n
     run_pipeline_test("Valid EXISTS fake (False)", "*2\r\n$6\r\nEXISTS\r\n$4\r\nfake\r\n", dispatcher);
 
-    // SIZE (Should be 2, encode as "i1\r\n2\r\n")
+    // SIZE → :2\r\n
     run_pipeline_test("Valid SIZE (Expect 2)", "*1\r\n$4\r\nSIZE\r\n", dispatcher);
 
-    // KEYS (Should return list of "foo" and "hello")
+    // KEYS → *2\r\n$3\r\nfoo\r\n$5\r\nhello\r\n
     run_pipeline_test("Valid KEYS", "*1\r\n$4\r\nKEYS\r\n", dispatcher);
 
     // --- 3. DELETE & CLEAR OPERATIONS ---
 
-    // DEL foo (True, should encode as "b1\r\n")
+    // DEL foo → :1\r\n
     run_pipeline_test("Valid DEL foo (Success)", "*2\r\n$3\r\nDEL\r\n$3\r\nfoo\r\n", dispatcher);
     
-    // DEL foo AGAIN (False, should encode as "b0\r\n")
+    // DEL foo again → :0\r\n
     run_pipeline_test("Valid DEL foo (Already Deleted)", "*2\r\n$3\r\nDEL\r\n$3\r\nfoo\r\n", dispatcher);
 
-    // CLEAR (Should encode as "v\r\n")
+    // CLEAR → +OK\r\n
     run_pipeline_test("Valid CLEAR", "*1\r\n$5\r\nCLEAR\r\n", dispatcher);
     
-    // SIZE after CLEAR (Should be 0, encode as "i1\r\n0\r\n")
+    // SIZE after CLEAR → :0\r\n
     run_pipeline_test("Valid SIZE (Expect 0 after CLEAR)", "*1\r\n$4\r\nSIZE\r\n", dispatcher);
 
     // --- 4. DISPATCHER ERROR CASES ---
 
-    // Invalid Dispatch: SET missing value (Should encode as "eX\r\nError...\r\n")
+    // SET missing value → -ERR ...\r\n
     run_pipeline_test("Dispatcher Error: SET missing value", "*2\r\n$3\r\nSET\r\n$3\r\nfoo\r\n", dispatcher);
 
-    // Invalid Dispatch: GET missing key
+    // GET missing key → -ERR ...\r\n
     run_pipeline_test("Dispatcher Error: GET missing key", "*1\r\n$3\r\nGET\r\n", dispatcher);
 
     // --- 5. PARSER ERROR CASES ---
