@@ -4,6 +4,7 @@ Dispatcher::DispatchResult Dispatcher::dispatch(const Command& command) {
     switch(command.type) {
         case Command::Type::SET:
             if (command.args.size() != 2) return std::unexpected("Error[Dispatcher Error]: SET requires a key and a value argument");
+            wal_.write_ahead(OPCODE_SET, command.args[0], command.args[1]);
             kvstore_.set(command.args[0], command.args[1]);
             return Void{};
 
@@ -29,6 +30,7 @@ Dispatcher::DispatchResult Dispatcher::dispatch(const Command& command) {
 
         case Command::Type::DEL:
             if (command.args.empty()) return std::unexpected("Error[Dispatcher Error]: DEL requires a key");
+            wal_.write_ahead(OPCODE_DEL, command.args[0]);
             return kvstore_.del(command.args[0]);
 
         case Command::Type::CLEAR:

@@ -9,8 +9,8 @@ persistence via a write-ahead log.
 
 ## Status
 
-Active development. Concurrency layer complete (multi-threaded epoll server, reader-writer locking, TSan clean).
-Persistence layer next.
+Active development. Persistence layer complete (write-ahead log, binary record format, crash recovery).
+Hardening layer next.
 
 ## Architecture
 
@@ -21,7 +21,26 @@ Persistence layer next.
 - **Encoder** — serializes results back to RESP wire format
 - **Networking** — multi-threaded TCP server; each thread runs its own epoll event loop with `SO_REUSEPORT`
 - **Concurrency** — reader-writer locking via `std::shared_mutex`; concurrent reads, exclusive writes; TSan verified
-- **Persistence** — write-ahead log with crash recovery (planned)
+- **Persistence** — append-only write-ahead log with binary record format and crash recovery on startup
+
+## Persistence
+
+kvstore uses a write-ahead log (WAL) for crash-resistant persistence. Every mutating command (SET, DEL) is serialized to disk and fsynced before being applied to the in-memory store. On startup, the WAL is replayed in full to reconstruct state.
+
+### Record Format
+
+Each WAL record uses a fixed binary layout:
+
+```
+| length (4B) | checksum (4B) | opcode (1B) | key_len (4B) | key | value_len (4B) | value |
+```
+
+- **length** — total payload size in bytes; used to detect partial writes on recovery
+- **checksum** — reserved for future integrity validation
+- **opcode** — `0x00` for SET, `0x01` for DEL
+- All multi-byte integers are little-endian
+
+Partial records at the end of the WAL (caused by a crash mid-write) are detected via length mismatch and discarded. The WAL file is opened with `O_APPEND` to guarantee all writes go to the end of the file.
 
 ## Commands
 
@@ -58,6 +77,7 @@ make
 Server spawns one thread per logical core via `std::thread::hardware_concurrency()`.
 Each thread binds its own `SO_REUSEPORT` socket and runs an independent epoll loop.
 All threads share a single `KVStore` instance protected by a reader-writer lock.
+WAL is written to `kvstore.wal` in the working directory.
 Listens on port 6379 by default.
 
 ## Connect

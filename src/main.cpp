@@ -12,7 +12,31 @@
 
 int main() {
     KVStore store;
-    Dispatcher dispatcher(store);
+
+    std::cout << "Initializing Write-Ahead Log..." << std::endl;
+    WAL wal("kvstore.wal");
+
+    Dispatcher dispatcher(store, wal);
+
+    std::cout << "Recovering from WAL..." << std::endl;
+    std::vector<Command> recovered_commands = wal.recover();
+
+    if (!recovered_commands.empty()) {
+        std::cout << "Replaying " << recovered_commands.size() << " commands from WAL..." << std::endl;
+        for (const auto& cmd : recovered_commands) {
+            if (cmd.type == Command::Type::SET && cmd.args.size() == 2) {
+                store.set(cmd.args[0], cmd.args[1]);
+            } 
+            else if (cmd.type == Command::Type::DEL && !cmd.args.empty()) {
+                store.del(cmd.args[0]);
+            }
+        }
+        std::cout << "Recovery complete." << std::endl;
+    } else {
+        std::cout << "WAL is empty. Starting fresh." << std::endl;
+    }
+
+
     unsigned int num_threads = std::thread::hardware_concurrency();
     
     if (num_threads == 0) {

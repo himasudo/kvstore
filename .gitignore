@@ -2,3 +2,4 @@ kvstore
 test_pipeline
 *.o
 *.d
+*.wal
