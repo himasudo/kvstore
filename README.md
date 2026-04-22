@@ -5,11 +5,11 @@ A networked, concurrent, persistent key-value storage engine written in C++23.
 Designed from scratch as a systems programming project, kvstore implements
 a Redis-comparable architecture: a custom wire protocol, in-memory hash map
 storage, TCP networking, concurrent client handling, and crash-resistant
-persistence via a write-ahead log.
+persistence via a write-ahead log and periodic snapshotting.
 
 ## Status
 
-Active development. Persistence layer complete (write-ahead log, binary record format, crash recovery).
+Active development. Snapshotting complete (periodic full-state snapshot, WAL truncation, combined recovery).
 Hardening layer next.
 
 ## Architecture
@@ -22,14 +22,41 @@ Hardening layer next.
 - **Networking** — multi-threaded TCP server; each thread runs its own epoll event loop with `SO_REUSEPORT`
 - **Concurrency** — reader-writer locking via `std::shared_mutex`; concurrent reads, exclusive writes; TSan verified
 - **Persistence** — append-only write-ahead log with binary record format and crash recovery on startup
+- **Snapshotting** — periodic full-state snapshot with atomic file replacement and WAL truncation
 
 ## Persistence
 
-kvstore uses a write-ahead log (WAL) for crash-resistant persistence. Every mutating command (SET, DEL) is serialized to disk and fsynced before being applied to the in-memory store. On startup, the WAL is replayed in full to reconstruct state.
+kvstore uses a two-tier persistence strategy: a write-ahead log (WAL) for durability on every mutation,
+and periodic snapshots to bound recovery time.
+
+### Write-Ahead Log
+
+Every mutating command (SET, DEL) is serialized to disk and fsynced before being applied to the in-memory
+store. On startup, the WAL is replayed in full to reconstruct any mutations since the last snapshot.
+
+### Snapshotting
+
+A background thread writes a full snapshot of the current store state to disk every 60 seconds.
+The snapshot uses an atomic write sequence to guarantee no crash window:
+
+1. Write all live key-value pairs as SET records to `kvstore.snapshot.tmp`
+2. `fsync` the tmp file — guarantee it reaches physical storage
+3. `rename` tmp to `kvstore.snapshot` — atomic directory entry swap, no half-states possible
+4. Truncate `kvstore.wal` to zero — all prior mutations are now covered by the snapshot
+
+### Recovery Sequence
+
+On startup, kvstore recovers state in two phases:
+
+1. Load `kvstore.snapshot` if it exists — reconstructs state at the time of the last snapshot
+2. Replay `kvstore.wal` on top — applies any mutations that occurred after the snapshot
+
+WAL replay is idempotent: if the server crashed between the snapshot rename and the WAL truncation,
+the WAL still replays cleanly. `insert_or_assign` on an already-present key is a no-op in terms of correctness.
 
 ### Record Format
 
-Each WAL record uses a fixed binary layout:
+Both the WAL and snapshot use the same binary record layout:
 
 ```
 | length (4B) | checksum (4B) | opcode (1B) | key_len (4B) | key | value_len (4B) | value |
@@ -40,7 +67,7 @@ Each WAL record uses a fixed binary layout:
 - **opcode** — `0x00` for SET, `0x01` for DEL
 - All multi-byte integers are little-endian
 
-Partial records at the end of the WAL (caused by a crash mid-write) are detected via length mismatch and discarded. The WAL file is opened with `O_APPEND` to guarantee all writes go to the end of the file.
+Partial records at the end of the WAL (caused by a crash mid-write) are detected via length mismatch and discarded.
 
 ## Commands
 
@@ -78,6 +105,7 @@ Server spawns one thread per logical core via `std::thread::hardware_concurrency
 Each thread binds its own `SO_REUSEPORT` socket and runs an independent epoll loop.
 All threads share a single `KVStore` instance protected by a reader-writer lock.
 WAL is written to `kvstore.wal` in the working directory.
+Snapshot is written to `kvstore.snapshot` every 60 seconds.
 Listens on port 6379 by default.
 
 ## Connect

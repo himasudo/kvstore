@@ -49,3 +49,15 @@ void KVStore::clear() {
     std::unique_lock<std::shared_mutex> lock(mutex_);
     store_.clear();
 }
+
+std::vector<std::pair<std::string, std::string>> KVStore::entries() const {
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    std::vector<std::pair<std::string, std::string>> store_entries;
+    store_entries.reserve(store_.size());
+
+    for (const auto& pair : store_) {
+        store_entries.push_back(pair);
+    }
+
+    return store_entries;
+}

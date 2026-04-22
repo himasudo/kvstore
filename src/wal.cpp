@@ -147,3 +147,13 @@ std::vector<Command> WAL::recover() {
 
     return commands;
 }
+
+void WAL::reset() {
+    if (ftruncate(fd_, 0) == -1) {
+        throw std::system_error(errno, std::generic_category(), "Failed to truncate WAL");
+    }
+    
+    if (lseek(fd_, 0, SEEK_SET) == -1) {
+        throw std::system_error(errno, std::generic_category(), "Failed to seek to beginning of WAL after truncate");
+    }
+}

@@ -8,6 +8,7 @@
 #include <functional>
 #include <mutex>
 #include <shared_mutex>
+#include <utility>
 
 struct StringHash {
     using is_transparent = void;
@@ -31,6 +32,8 @@ class KVStore {
         std::vector<std::string> keys() const;
 
         void clear();
+
+        std::vector<std::pair<std::string, std::string>> entries() const;
 
     private:
         std::unordered_map<std::string, std::string, StringHash, std::equal_to<>> store_;
