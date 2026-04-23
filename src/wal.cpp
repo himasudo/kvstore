@@ -7,6 +7,8 @@
 #include <cerrno>
 #include <system_error>
 
+WAL::WAL() : fd_(-1) {}
+
 WAL::WAL(const std::string& path) {
     fd_ = open(path.c_str(), O_RDWR | O_CREAT | O_APPEND, 0644);
     if (fd_ == -1) {
@@ -22,6 +24,8 @@ WAL::~WAL() {
 }
 
 void WAL::write_ahead(uint8_t opcode, const std::string& key, const std::string& value) {
+    if (fd_ == -1) return;
+
     uint32_t key_len = key.size();
     uint32_t val_len = value.size();
 
@@ -149,6 +153,7 @@ std::vector<Command> WAL::recover() {
 }
 
 void WAL::reset() {
+    if (fd_ == -1) return;
     if (ftruncate(fd_, 0) == -1) {
         throw std::system_error(errno, std::generic_category(), "Failed to truncate WAL");
     }

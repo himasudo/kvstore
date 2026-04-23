@@ -37,6 +37,11 @@ int run_server(Dispatcher& dispatcher) {
     epoll_ctl(epfd, EPOLL_CTL_ADD, server_fd, &ev);
 
     std::unordered_map<int, std::string> buffers;
+    auto close_connection = [&](int fd) {
+        epoll_ctl(epfd, EPOLL_CTL_DEL, fd, nullptr);
+        close(fd);
+        buffers.erase(fd);
+    };
     epoll_event events[64];
 
     while (true) {
@@ -66,9 +71,7 @@ int run_server(Dispatcher& dispatcher) {
                 }
 
             } else if (events_mask & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
-                epoll_ctl(epfd, EPOLL_CTL_DEL, fd, nullptr);
-                close(fd);
-                buffers.erase(fd);
+                close_connection(fd);
 
             } else if (events_mask & EPOLLIN) {
                 auto& accum = buffers[fd];
@@ -80,6 +83,11 @@ int run_server(Dispatcher& dispatcher) {
                     if (r == 0) { break; }
                     if (errno == EAGAIN) break;
                     break;
+                }
+
+                if (accum.size() > MAX_BUFFER_SIZE) {
+                    close_connection(fd);
+                    continue;
                 }
 
                 while (!accum.empty()) {

@@ -9,6 +9,7 @@ inline constexpr uint8_t OPCODE_DEL = 1;
 
 class WAL {
     public:
+        WAL();
         WAL(const std::string& path);
         ~WAL();
 

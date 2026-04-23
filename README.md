@@ -7,16 +7,11 @@ a Redis-comparable architecture: a custom wire protocol, in-memory hash map
 storage, TCP networking, concurrent client handling, and crash-resistant
 persistence via a write-ahead log and periodic snapshotting.
 
-## Status
-
-Active development. Snapshotting complete (periodic full-state snapshot, WAL truncation, combined recovery).
-Hardening layer next.
-
 ## Architecture
 
 - **Storage engine** — `std::unordered_map` with heterogeneous lookup, protected by `std::shared_mutex`
 - **Protocol** — RESP (Redis Serialization Protocol) — compatible with redis-cli and any RESP client
-- **Parser** — converts raw wire bytes into typed `Command` structs
+- **Parser** — converts raw wire bytes into typed `Command` structs; enforces size limits on all length prefixes
 - **Dispatcher** — executes commands against the store, returns typed results via `std::variant`
 - **Encoder** — serializes results back to RESP wire format
 - **Networking** — multi-threaded TCP server; each thread runs its own epoll event loop with `SO_REUSEPORT`

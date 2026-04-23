@@ -9,6 +9,7 @@
 #include "kvstore.h"
 #include "dispatcher.h"
 #include "encoder.h"
+#include "wal.h"
 
 /**
  * Converts the Command::Type enum to a string for display.
@@ -112,7 +113,8 @@ int main() {
     std::cout << "--- Starting KVStore Pipeline Verification ---\n\n";
 
     KVStore kvstore;
-    Dispatcher dispatcher(kvstore);
+    WAL wal;
+    Dispatcher dispatcher(kvstore, wal);
 
     // --- 1. POPULATE STORE ---
     

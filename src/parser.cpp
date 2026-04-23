@@ -37,8 +37,15 @@ std::expected<Command, std::string> parse(std::string_view input) {
             if (arg_count_str.empty()) {
                 return std::unexpected("Error[Invalid Input]: The input provided does not contain token size");
             }
-            arg_count = std::stoi(arg_count_str);
-            arg_count--; // decrement because we are not counting the command in the arg size
+            try {
+                arg_count = std::stoi(arg_count_str);
+            } catch (const std::exception&) {
+                return std::unexpected("Error[Invalid Input]: Argument count out of range");
+            }
+            arg_count--;
+            if (arg_count > MAX_ARG_COUNT) {
+                return std::unexpected("Error[Invalid Input]: too many arguments");
+            }
             arg_count_flag = false;
             c+=2; // consume both "/r/n" and break
             break;
@@ -66,7 +73,14 @@ std::expected<Command, std::string> parse(std::string_view input) {
 
     while (c < end) {
         if (*c == '\r' && (c + 1) < end && *(c + 1) == '\n') {
-            command_size = std::stoi(command_size_str);
+            try {
+                command_size = std::stoi(command_size_str);
+            } catch (const std::exception&) {
+                return std::unexpected("Error[Invalid Input]: Command count out of range");
+            }
+            if (static_cast<size_t>(command_size) > MAX_COMMAND_SIZE) {
+                return std::unexpected("Error[Invalid Input]: The command provided exceeds maximum limit");
+            }
             c += 2;
             break;
         } else if (std::isdigit(*c)) {
@@ -109,7 +123,14 @@ std::expected<Command, std::string> parse(std::string_view input) {
             if (arg_size_str.empty()) {
                 return std::unexpected("Error[Invalid Input]: Argument mentioned but not present");
             }
-            arg_size = std::stoi(arg_size_str);
+            try {
+                arg_size = std::stoi(arg_size_str);
+            } catch (const std::exception&) {
+                return std::unexpected("Error[Invalid Input]: Argument size out of range");
+            }
+            if (static_cast<size_t>(arg_size) > MAX_VALUE_SIZE) {
+                return std::unexpected("Error[Invalid Input]: The argument size provided exceeds maximum limit");
+            }
             arg_size_str = "";
             arg_size_flag = false;
             arg_flag = true;
