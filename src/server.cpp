@@ -9,6 +9,12 @@
 #include <cerrno>
 #include <unordered_map>
 #include <string>
+#include <sys/eventfd.h>
+#include <atomic>
+#include <chrono>
+
+extern int shutdown_fd;
+extern std::atomic<bool> keep_running;
 
 int run_server(Dispatcher& dispatcher) {
 
@@ -36,25 +42,40 @@ int run_server(Dispatcher& dispatcher) {
     ev.data.fd = server_fd;
     epoll_ctl(epfd, EPOLL_CTL_ADD, server_fd, &ev);
 
+    if (shutdown_fd != -1) {
+        epoll_event ev_shutdown{};
+        ev_shutdown.events = EPOLLIN;
+        ev_shutdown.data.fd = shutdown_fd;
+        epoll_ctl(epfd, EPOLL_CTL_ADD, shutdown_fd, &ev_shutdown);
+    }
+
     std::unordered_map<int, std::string> buffers;
+    std::unordered_map<int, std::chrono::steady_clock::time_point> last_active;
     auto close_connection = [&](int fd) {
         epoll_ctl(epfd, EPOLL_CTL_DEL, fd, nullptr);
         close(fd);
         buffers.erase(fd);
+        last_active.erase(fd);
     };
     epoll_event events[64];
 
-    while (true) {
-        int n = epoll_wait(epfd, events, 64, -1);
+    while (keep_running) {
+        int n = epoll_wait(epfd, events, 64, 1000);
         if (n < 0) {
             if (errno == EINTR) continue;
             break;
         }
 
+        bool should_shutdown = false;
+
         for (int i = 0; i < n; i++) {
             int fd              = events[i].data.fd;
             uint32_t events_mask = events[i].events;
 
+            if (fd == shutdown_fd) {
+                should_shutdown = true;
+                break; 
+            }
             if (fd == server_fd) {
                 while (true) {
                     sockaddr_in client_addr{};
@@ -68,6 +89,8 @@ int run_server(Dispatcher& dispatcher) {
                     cev.data.fd = cfd;
                     epoll_ctl(epfd, EPOLL_CTL_ADD, cfd, &cev);
                     buffers[cfd] = "";
+
+                    last_active[cfd] = std::chrono::steady_clock::now();
                 }
 
             } else if (events_mask & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
@@ -75,6 +98,8 @@ int run_server(Dispatcher& dispatcher) {
 
             } else if (events_mask & EPOLLIN) {
                 auto& accum = buffers[fd];
+                
+                last_active[fd] = std::chrono::steady_clock::now();
 
                 while (true) {
                     char chunk[4096];
@@ -112,6 +137,23 @@ int run_server(Dispatcher& dispatcher) {
                     }
                 }
             }
+        }
+        if (should_shutdown) {
+            break;
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        std::vector<int> stale_fds;
+
+        for (const auto& [fd, timestamp]: last_active) {
+            auto idle = std::chrono::duration_cast<std::chrono::seconds>(now - timestamp).count();
+            if (idle > 30) {
+                stale_fds.push_back(fd);
+            }
+        }
+
+        for (int stale_fd : stale_fds) {
+            close_connection(stale_fd);
         }
     }
 

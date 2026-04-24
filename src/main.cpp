@@ -11,12 +11,20 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <sys/eventfd.h>
+#include <unistd.h>
 
 std::atomic<bool> keep_running{true};
+int shutdown_fd = -1;
 
 void handle_sigint(int) {
-    std::cout << "\nInitiating graceful shutdown..." << std::endl;
     keep_running = false;
+
+    if (shutdown_fd != -1) {
+        uint64_t wake_signal = 1;
+        ssize_t res = write(shutdown_fd, &wake_signal, sizeof(wake_signal));
+        (void)res;
+    }
 }
 
 void snapshot_worker(KVStore& store, WAL& wal) {
@@ -43,6 +51,12 @@ void snapshot_worker(KVStore& store, WAL& wal) {
 }
 
 int main() {
+    shutdown_fd = eventfd(0, EFD_NONBLOCK);
+    if (shutdown_fd == -1) {
+        std::cerr << "Failed to create eventfd" << std::endl;
+        return 1;
+    }
+
     std::signal(SIGINT, handle_sigint);
 
     KVStore store;
@@ -101,7 +115,7 @@ int main() {
     if (snap_thread.joinable()) {
         snap_thread.join();
     }
-
+    if (shutdown_fd != -1) close(shutdown_fd);
     std::cout << "Server completely shut down." << std::endl;
     return 0;
 }
