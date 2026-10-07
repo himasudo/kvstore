@@ -54,7 +54,7 @@ void WAL::write_ahead(uint8_t opcode, const std::string& key, const std::string&
     size_t buf_size = command_buf.size();
     while(sent < buf_size) {
         int w = write(fd_, buf_data + sent, buf_size - sent);
-    if (w == -1) {
+        if (w == -1) {
             if (errno == EINTR) {
                 continue; 
             }
@@ -124,7 +124,6 @@ std::vector<Command> WAL::recover() {
         std::string key(reinterpret_cast<char*>(payload.data() + offset), key_len);
         offset += key_len;
 
-
         uint32_t val_len;
         std::memcpy(&val_len, payload.data() + offset, sizeof(val_len));
         offset += sizeof(val_len);
@@ -141,6 +140,11 @@ std::vector<Command> WAL::recover() {
             Command cmd;
             cmd.type = Command::Type::DEL;
             cmd.args = {key};
+            commands.push_back(cmd);
+        }
+        else if (opcode == OPCODE_CLEAR) {
+            Command cmd;
+            cmd.type = Command::Type::CLEAR;
             commands.push_back(cmd);
         }
     }
