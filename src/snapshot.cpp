@@ -7,6 +7,28 @@
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
+#include <filesystem>
+
+static void fsync_parent_directory(const std::string& path) {
+    std::filesystem::path parent = std::filesystem::path(path).parent_path();
+    if (parent.empty()) {
+        parent = ".";
+    }
+
+    int dir_fd = open(parent.c_str(), O_RDONLY | O_DIRECTORY);
+    if (dir_fd == -1) {
+        throw std::system_error(errno, std::generic_category(), "Failed to open snapshot directory");
+    }
+
+    while (fsync(dir_fd) == -1) {
+        if (errno == EINTR) continue;
+        int saved_errno = errno;
+        close(dir_fd);
+        throw std::system_error(saved_errno, std::generic_category(), "Snapshot directory fsync failed");
+    }
+
+    close(dir_fd);
+}
 
 void Snapshot::write(const KVStore& store, const std::string& path) {
     std::vector<std::pair<std::string, std::string>> entries = store.entries();
@@ -71,6 +93,8 @@ void Snapshot::write(const KVStore& store, const std::string& path) {
     if (std::rename(tmp_path.c_str(), path.c_str()) != 0) {
         throw std::system_error(errno, std::generic_category(), "Failed to rename snapshot tmp file");
     }
+
+    fsync_parent_directory(path);
 }
 
 void Snapshot::recover(KVStore& store, const std::string& path) {

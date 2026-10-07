@@ -19,7 +19,7 @@ This is intentionally a correctness-first design. The single mutation lock also 
 Startup recovery is:
 
 1. load the latest valid snapshot;
-2. replay WAL records that follow it in order.
+2. replay the WAL in order.
 
 Replaying the WAL should reconstruct the same committed state that existed before the process stopped.
 
@@ -27,11 +27,19 @@ The mutation-ordering regression test compares the live store with a fresh store
 
 ## Snapshot checkpointing
 
-The current snapshot implementation copies the store, writes and renames a snapshot, then truncates the WAL. A mutation can arrive after the store copy but before WAL truncation, which creates a data-loss window.
+Checkpoint creation is serialized with mutations through the same dispatcher mutation lock. While that lock is held the server:
 
-Until checkpointing is tied to an explicit WAL position/LSN, snapshots should not be described as providing a complete crash-consistency guarantee.
+1. copies the current store into a temporary snapshot;
+2. fsyncs the snapshot file;
+3. renames it into place;
+4. fsyncs the parent directory so the rename is durable;
+5. resets the WAL.
 
-The planned fix is to make checkpoints identify the WAL position they cover and only retire WAL data that is known to be included in that checkpoint.
+A mutation therefore cannot land in the WAL after the snapshot's state was captured and then be removed by the WAL reset. Reads can continue during the checkpoint, but writes wait for it to finish.
+
+This deliberately favors a simple correctness argument over write availability: snapshot I/O currently pauses mutations. A later LSN/segmented-WAL design should allow checkpoint I/O and new writes to proceed concurrently while retiring only WAL records known to be covered by the snapshot.
+
+`test_checkpoint` races multiple writers against checkpoint creation and verifies that loading the snapshot followed by WAL replay reconstructs the live store.
 
 ## Disk format
 

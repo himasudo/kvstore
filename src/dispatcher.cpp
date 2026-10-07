@@ -1,4 +1,5 @@
 #include "dispatcher.h"
+#include "snapshot.h"
 
 Dispatcher::DispatchResult Dispatcher::dispatch(const Command& command) {
     switch(command.type) {
@@ -49,4 +50,10 @@ Dispatcher::DispatchResult Dispatcher::dispatch(const Command& command) {
         default:
             return std::unexpected("Error[Dispatcher Error] Unknown command type");
     }
+}
+
+void Dispatcher::checkpoint(Snapshot& snapshot, const std::string& path) {
+    std::lock_guard<std::mutex> lock(mutation_mutex_);
+    snapshot.write(kvstore_, path);
+    wal_.reset();
 }

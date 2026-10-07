@@ -9,6 +9,8 @@
 #include "command.h"
 #include "wal.h"
 
+class Snapshot;
+
 struct Void {};
 
 class Dispatcher {
@@ -21,5 +23,6 @@ class Dispatcher {
         using ResultValue = std::variant<std::monostate, Void, bool, int, std::string, std::vector<std::string>>;
         using DispatchResult = std::expected<ResultValue, std::string>;
         DispatchResult dispatch(const Command& command);
+        void checkpoint(Snapshot& snapshot, const std::string& path);
 
 };

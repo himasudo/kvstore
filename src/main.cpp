@@ -27,7 +27,7 @@ void handle_sigint(int) {
     }
 }
 
-void snapshot_worker(KVStore& store, WAL& wal) {
+void snapshot_worker(Dispatcher& dispatcher) {
     Snapshot snapshot;
     const int interval_seconds = 60;
 
@@ -40,9 +40,7 @@ void snapshot_worker(KVStore& store, WAL& wal) {
 
         try {
             std::cout << "[Background] Taking snapshot..." << std::endl;
-            snapshot.write(store, "kvstore.snapshot");
-            
-            wal.reset();
+            dispatcher.checkpoint(snapshot, "kvstore.snapshot");
             std::cout << "[Background] Snapshot successful. WAL truncated." << std::endl;
         } catch (const std::exception& e) {
             std::cerr << "[Background Error] " << e.what() << std::endl;
@@ -98,7 +96,7 @@ int main() {
     Dispatcher dispatcher(store, wal);
 
     std::cout << "Starting background snapshot thread (60s interval)..." << std::endl;
-    std::thread snap_thread(snapshot_worker, std::ref(store), std::ref(wal));
+    std::thread snap_thread(snapshot_worker, std::ref(dispatcher));
 
     unsigned int num_threads = std::thread::hardware_concurrency();
     if (num_threads == 0) num_threads = 4;
