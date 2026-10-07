@@ -86,6 +86,9 @@ int main() {
             else if (cmd.type == Command::Type::DEL && !cmd.args.empty()) {
                 store.del(cmd.args[0]);
             }
+            else if (cmd.type == Command::Type::CLEAR) {
+                store.clear();
+            }
         }
         std::cout << "WAL replay complete." << std::endl;
     } else {
