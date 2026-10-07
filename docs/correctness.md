@@ -41,12 +41,10 @@ This deliberately favors a simple correctness argument over write availability: 
 
 `test_checkpoint` races multiple writers against checkpoint creation and verifies that loading the snapshot followed by WAL replay reconstructs the live store.
 
-## Disk format
+## WAL recovery boundaries
 
-WAL and snapshot readers must treat lengths and opcodes as untrusted input. Future format work will add:
+WAL recovery treats the file as untrusted input. Before allocating a record payload it validates the advertised record size against fixed minimum and maximum bounds. Key/value lengths are then checked against the actual record boundary before any string is constructed.
 
-- record size validation before allocation;
-- bounds checks for key/value lengths;
-- checksums;
-- format versioning;
-- defined handling for a torn final record.
+A partial final header or payload is treated as a torn tail. Recovery truncates the file back to the last complete record and fsyncs that repair. Structural corruption inside a complete record, an unknown opcode, or invalid command-specific fields is treated as corruption rather than silently skipped.
+
+The record checksum field is still reserved and format versioning has not been added yet. Those are the next disk-format changes.
