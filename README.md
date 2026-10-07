@@ -47,14 +47,17 @@ Startup recovery loads the snapshot first, then replays the WAL.
 
 Snapshot recovery validates the entire file before applying any entries; truncated or malformed published snapshots are rejected without partially mutating the store.\n\nWAL recovery validates record sizes and field boundaries before using them. A partial final WAL record is treated as a torn tail and truncated back to the last complete record. Structurally invalid complete records and unknown opcodes are rejected.
 
-### WAL format
+### Persistence format
+
+WAL and snapshot files use the same versioned record codec:
 
 ```text
-file:   | KVWL (4B) | version (4B) | records... |
-record: | length (4B) | CRC32C (4B) | opcode (1B) | key_len (4B) | key | value_len (4B) | value |
+WAL:      | KVWL (4B) | version (4B) | records... |
+snapshot: | KVSS (4B) | version (4B) | records... |
+record:   | length (4B) | CRC32C (4B) | opcode (1B) | key_len (4B) | key | value_len (4B) | value |
 ```
 
-All integer fields are little-endian. WAL records are checksummed before replay, and unsupported format versions are rejected. Opcodes are `0x00 SET`, `0x01 DEL`, and `0x02 CLEAR`.
+All integer fields are little-endian. Record payloads are checksummed before replay, and unsupported format versions are rejected. WAL opcodes are `0x00 SET`, `0x01 DEL`, and `0x02 CLEAR`; snapshots contain SET records.
 
 ## Networking
 

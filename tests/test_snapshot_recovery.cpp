@@ -1,6 +1,6 @@
+#include <array>
 #include <cassert>
 #include <cstdio>
-#include <cstring>
 #include <filesystem>
 #include <fcntl.h>
 #include <stdexcept>
@@ -8,7 +8,10 @@
 #include <unistd.h>
 
 #include "kvstore.h"
+#include "persistence_format.h"
 #include "snapshot.h"
+
+static constexpr std::array<uint8_t, 4> SNAPSHOT_MAGIC{'K', 'V', 'S', 'S'};
 
 static void write_all(int fd, const void* data, size_t size) {
     const auto* bytes = static_cast<const char*>(data);
@@ -20,18 +23,25 @@ static void write_all(int fd, const void* data, size_t size) {
     }
 }
 
-static void write_record(int fd, uint8_t opcode, const std::string& key, const std::string& value) {
-    uint32_t key_len = static_cast<uint32_t>(key.size());
-    uint32_t val_len = static_cast<uint32_t>(value.size());
-    uint32_t total_size = 1 + 4 + key_len + 4 + val_len;
-    uint32_t header[2] = {total_size, 0};
+static void create_snapshot_file(const std::string& path) {
+    int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    assert(fd != -1);
+    auto header = make_file_header(SNAPSHOT_MAGIC);
+    write_all(fd, header.data(), header.size());
+    close(fd);
+}
 
-    write_all(fd, header, sizeof(header));
-    write_all(fd, &opcode, sizeof(opcode));
-    write_all(fd, &key_len, sizeof(key_len));
-    if (!key.empty()) write_all(fd, key.data(), key.size());
-    write_all(fd, &val_len, sizeof(val_len));
-    if (!value.empty()) write_all(fd, value.data(), value.size());
+static void append_bytes(const std::string& path, const void* data, size_t size) {
+    int fd = open(path.c_str(), O_WRONLY | O_APPEND);
+    assert(fd != -1);
+    write_all(fd, data, size);
+    close(fd);
+}
+
+static void append_record(const std::string& path, uint8_t opcode,
+                          const std::string& key, const std::string& value) {
+    auto record = encode_record(opcode, key, value);
+    append_bytes(path, record.data(), record.size());
 }
 
 static void expect_corruption_without_mutation(const std::string& path) {
@@ -74,73 +84,126 @@ int main() {
     }
     std::remove(valid_path.c_str());
 
-    const std::string partial_path = base.string() + "-partial.snapshot";
-    std::remove(partial_path.c_str());
+    const std::string empty_path = base.string() + "-empty.snapshot";
+    std::remove(empty_path.c_str());
     {
-        int fd = open(partial_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        KVStore source;
+        Snapshot snapshot;
+        snapshot.write(source, empty_path);
+        KVStore recovered;
+        snapshot.recover(recovered, empty_path);
+        assert(recovered.size() == 0);
+    }
+    std::remove(empty_path.c_str());
+
+    const std::string partial_file_header_path = base.string() + "-partial-file-header.snapshot";
+    std::remove(partial_file_header_path.c_str());
+    {
+        int fd = open(partial_file_header_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
         assert(fd != -1);
-        write_record(fd, SNAPSHOT_OPCODE_SET, "would-leak", "value");
-        const uint8_t partial_header[] = {0x20, 0x00, 0x00};
-        write_all(fd, partial_header, sizeof(partial_header));
+        const uint8_t partial[] = {'K', 'V', 'S'};
+        write_all(fd, partial, sizeof(partial));
         close(fd);
     }
-    expect_corruption_without_mutation(partial_path);
-    std::remove(partial_path.c_str());
+    expect_corruption_without_mutation(partial_file_header_path);
+    std::remove(partial_file_header_path.c_str());
+
+    const std::string partial_record_path = base.string() + "-partial-record.snapshot";
+    std::remove(partial_record_path.c_str());
+    create_snapshot_file(partial_record_path);
+    append_record(partial_record_path, SNAPSHOT_OPCODE_SET, "would-leak", "value");
+    {
+        const uint8_t partial[] = {0x20, 0x00, 0x00};
+        append_bytes(partial_record_path, partial, sizeof(partial));
+    }
+    expect_corruption_without_mutation(partial_record_path);
+    std::remove(partial_record_path.c_str());
 
     const std::string truncated_payload_path = base.string() + "-truncated-payload.snapshot";
     std::remove(truncated_payload_path.c_str());
+    create_snapshot_file(truncated_payload_path);
     {
-        int fd = open(truncated_payload_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        assert(fd != -1);
-        uint32_t header[2] = {SNAPSHOT_MIN_PAYLOAD_SIZE + 20, 0};
-        write_all(fd, header, sizeof(header));
-        uint8_t partial_payload[SNAPSHOT_MIN_PAYLOAD_SIZE]{};
-        partial_payload[0] = SNAPSHOT_OPCODE_SET;
-        write_all(fd, partial_payload, sizeof(partial_payload));
-        close(fd);
+        uint8_t header[PERSISTENCE_RECORD_HEADER_SIZE]{};
+        uint32_t size = PERSISTENCE_MIN_PAYLOAD_SIZE + 20;
+        header[0] = static_cast<uint8_t>(size);
+        header[1] = static_cast<uint8_t>(size >> 8);
+        header[2] = static_cast<uint8_t>(size >> 16);
+        header[3] = static_cast<uint8_t>(size >> 24);
+        append_bytes(truncated_payload_path, header, sizeof(header));
+        uint8_t partial[PERSISTENCE_MIN_PAYLOAD_SIZE]{};
+        append_bytes(truncated_payload_path, partial, sizeof(partial));
     }
     expect_corruption_without_mutation(truncated_payload_path);
     std::remove(truncated_payload_path.c_str());
 
+    const std::string bad_checksum_path = base.string() + "-bad-checksum.snapshot";
+    std::remove(bad_checksum_path.c_str());
+    {
+        KVStore source;
+        source.set("key", "value");
+        Snapshot snapshot;
+        snapshot.write(source, bad_checksum_path);
+    }
+    {
+        int fd = open(bad_checksum_path.c_str(), O_RDWR);
+        assert(fd != -1);
+        off_t pos = static_cast<off_t>(PERSISTENCE_FILE_HEADER_SIZE + PERSISTENCE_RECORD_HEADER_SIZE + 6);
+        assert(lseek(fd, pos, SEEK_SET) == pos);
+        uint8_t byte;
+        assert(read(fd, &byte, 1) == 1);
+        byte ^= 0x01;
+        assert(lseek(fd, pos, SEEK_SET) == pos);
+        assert(write(fd, &byte, 1) == 1);
+        close(fd);
+    }
+    expect_corruption_without_mutation(bad_checksum_path);
+    std::remove(bad_checksum_path.c_str());
+
     const std::string oversized_path = base.string() + "-oversized.snapshot";
     std::remove(oversized_path.c_str());
+    create_snapshot_file(oversized_path);
     {
-        int fd = open(oversized_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        assert(fd != -1);
-        uint32_t header[2] = {SNAPSHOT_MAX_PAYLOAD_SIZE + 1, 0};
-        write_all(fd, header, sizeof(header));
-        close(fd);
+        uint8_t header[PERSISTENCE_RECORD_HEADER_SIZE]{};
+        uint32_t size = PERSISTENCE_MAX_PAYLOAD_SIZE + 1;
+        header[0] = static_cast<uint8_t>(size);
+        header[1] = static_cast<uint8_t>(size >> 8);
+        header[2] = static_cast<uint8_t>(size >> 16);
+        header[3] = static_cast<uint8_t>(size >> 24);
+        append_bytes(oversized_path, header, sizeof(header));
     }
     expect_corruption_without_mutation(oversized_path);
     std::remove(oversized_path.c_str());
 
-    const std::string bad_length_path = base.string() + "-bad-length.snapshot";
-    std::remove(bad_length_path.c_str());
-    {
-        int fd = open(bad_length_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        assert(fd != -1);
-        uint32_t header[2] = {SNAPSHOT_MIN_PAYLOAD_SIZE, 0};
-        uint8_t payload[SNAPSHOT_MIN_PAYLOAD_SIZE]{};
-        payload[0] = SNAPSHOT_OPCODE_SET;
-        uint32_t impossible_key_len = 100;
-        std::memcpy(payload + 1, &impossible_key_len, sizeof(impossible_key_len));
-        write_all(fd, header, sizeof(header));
-        write_all(fd, payload, sizeof(payload));
-        close(fd);
-    }
-    expect_corruption_without_mutation(bad_length_path);
-    std::remove(bad_length_path.c_str());
-
     const std::string bad_opcode_path = base.string() + "-bad-opcode.snapshot";
     std::remove(bad_opcode_path.c_str());
-    {
-        int fd = open(bad_opcode_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        assert(fd != -1);
-        write_record(fd, 0xff, "key", "value");
-        close(fd);
-    }
+    create_snapshot_file(bad_opcode_path);
+    append_record(bad_opcode_path, 0xff, "key", "value");
     expect_corruption_without_mutation(bad_opcode_path);
     std::remove(bad_opcode_path.c_str());
+
+    const std::string bad_magic_path = base.string() + "-bad-magic.snapshot";
+    std::remove(bad_magic_path.c_str());
+    {
+        int fd = open(bad_magic_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        assert(fd != -1);
+        const uint8_t bad_header[PERSISTENCE_FILE_HEADER_SIZE] = {'B','A','D','!',1,0,0,0};
+        write_all(fd, bad_header, sizeof(bad_header));
+        close(fd);
+    }
+    expect_corruption_without_mutation(bad_magic_path);
+    std::remove(bad_magic_path.c_str());
+
+    const std::string bad_version_path = base.string() + "-bad-version.snapshot";
+    std::remove(bad_version_path.c_str());
+    {
+        int fd = open(bad_version_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        assert(fd != -1);
+        const uint8_t bad_header[PERSISTENCE_FILE_HEADER_SIZE] = {'K','V','S','S',2,0,0,0};
+        write_all(fd, bad_header, sizeof(bad_header));
+        close(fd);
+    }
+    expect_corruption_without_mutation(bad_version_path);
+    std::remove(bad_version_path.c_str());
 
     return 0;
 }

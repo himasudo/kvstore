@@ -11,7 +11,7 @@ TEST_RECOVERY_SRC = tests/test_recovery.cpp src/kvstore.cpp src/dispatcher.cpp s
 TEST_ORDERING_SRC = tests/test_mutation_ordering.cpp src/kvstore.cpp src/dispatcher.cpp src/wal.cpp src/persistence_format.cpp src/snapshot.cpp
 TEST_CHECKPOINT_SRC = tests/test_checkpoint.cpp src/kvstore.cpp src/dispatcher.cpp src/wal.cpp src/persistence_format.cpp src/snapshot.cpp
 TEST_WAL_RECOVERY_SRC = tests/test_wal_recovery.cpp src/wal.cpp src/persistence_format.cpp
-TEST_SNAPSHOT_RECOVERY_SRC = tests/test_snapshot_recovery.cpp src/kvstore.cpp src/snapshot.cpp
+TEST_SNAPSHOT_RECOVERY_SRC = tests/test_snapshot_recovery.cpp src/kvstore.cpp src/snapshot.cpp src/persistence_format.cpp
 TEST_PERSISTENCE_FORMAT_SRC = tests/test_persistence_format.cpp src/persistence_format.cpp
 
 all: kvstore

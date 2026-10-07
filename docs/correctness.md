@@ -54,4 +54,4 @@ WAL files now carry a `KVWL` format header and version number. Record payloads u
 
 Published snapshots are treated as complete checkpoints, not append-only logs. Recovery validates every record before applying any snapshot entry to the store.
 
-Record sizes are bounded before allocation, key/value lengths are checked against the record boundary, non-SET opcodes are rejected, and truncated headers or payloads fail recovery. If validation fails after earlier valid records, none of those records are applied to the target store.
+Record sizes are bounded before allocation, key/value lengths are checked against the record boundary, non-SET opcodes are rejected, and truncated headers or payloads fail recovery. Snapshot records use the same CRC32C-checked, little-endian v1 codec as WAL records, with a `KVSS` file header. If validation fails after earlier valid records, none of those records are applied to the target store.

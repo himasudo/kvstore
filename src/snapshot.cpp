@@ -1,4 +1,5 @@
 #include "snapshot.h"
+#include <array>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -6,10 +7,48 @@
 #include <cerrno>
 #include <vector>
 #include <cstdio>
-#include <cstring>
 #include <stdexcept>
 #include <filesystem>
-#include <limits>
+
+static constexpr std::array<uint8_t, 4> SNAPSHOT_MAGIC{'K', 'V', 'S', 'S'};
+
+static void write_all(int fd, const uint8_t* data, size_t size, const char* error_message) {
+    size_t written = 0;
+    while (written < size) {
+        ssize_t result = write(fd, data + written, size - written);
+        if (result == -1) {
+            if (errno == EINTR) continue;
+            throw std::system_error(errno, std::generic_category(), error_message);
+        }
+        if (result == 0) {
+            throw std::runtime_error(std::string(error_message) + ": zero-byte write");
+        }
+        written += static_cast<size_t>(result);
+    }
+}
+
+static void read_exact(int fd, void* buf, size_t count, const char* error_message) {
+    size_t bytes_read = 0;
+    char* ptr = static_cast<char*>(buf);
+    while (bytes_read < count) {
+        ssize_t result = read(fd, ptr + bytes_read, count - bytes_read);
+        if (result == 0) {
+            throw std::runtime_error("Corrupted Snapshot: unexpected EOF");
+        }
+        if (result == -1) {
+            if (errno == EINTR) continue;
+            throw std::system_error(errno, std::generic_category(), error_message);
+        }
+        bytes_read += static_cast<size_t>(result);
+    }
+}
+
+static void sync_fd(int fd, const char* error_message) {
+    while (fsync(fd) == -1) {
+        if (errno == EINTR) continue;
+        throw std::system_error(errno, std::generic_category(), error_message);
+    }
+}
 
 static void fsync_parent_directory(const std::string& path) {
     std::filesystem::path parent = std::filesystem::path(path).parent_path();
@@ -22,82 +61,36 @@ static void fsync_parent_directory(const std::string& path) {
         throw std::system_error(errno, std::generic_category(), "Failed to open snapshot directory");
     }
 
-    while (fsync(dir_fd) == -1) {
-        if (errno == EINTR) continue;
-        int saved_errno = errno;
+    try {
+        sync_fd(dir_fd, "Snapshot directory fsync failed");
+    } catch (...) {
         close(dir_fd);
-        throw std::system_error(saved_errno, std::generic_category(), "Snapshot directory fsync failed");
+        throw;
     }
-
     close(dir_fd);
 }
 
 void Snapshot::write(const KVStore& store, const std::string& path) {
     std::vector<std::pair<std::string, std::string>> entries = store.entries();
-
-    for (const auto& [key, value] : entries) {
-        if (key.size() > std::numeric_limits<uint32_t>::max() ||
-            value.size() > std::numeric_limits<uint32_t>::max()) {
-            throw std::length_error("Snapshot key or value is too large");
-        }
-
-        uint64_t payload_size = sizeof(uint8_t) + sizeof(uint32_t) + key.size() +
-                                sizeof(uint32_t) + value.size();
-        if (payload_size > SNAPSHOT_MAX_PAYLOAD_SIZE) {
-            throw std::length_error("Snapshot record exceeds maximum size");
-        }
-    }
-
     std::string tmp_path = path + ".tmp";
     int fd = open(tmp_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd == -1) {
         throw std::system_error(errno, std::generic_category(), "Failed to open temporary snapshot file");
     }
 
-    std::vector<uint8_t> command_buf;
-    for (const auto& [key, value] : entries) {
-        command_buf.clear();
-        uint32_t key_len = static_cast<uint32_t>(key.size());
-        uint32_t val_len = static_cast<uint32_t>(value.size());
-        uint32_t total_size = static_cast<uint32_t>(
-            sizeof(SNAPSHOT_OPCODE_SET) + sizeof(key_len) + key_len + sizeof(val_len) + val_len);
-        uint32_t checksum = 0;
+    try {
+        auto file_header = make_file_header(SNAPSHOT_MAGIC);
+        write_all(fd, file_header.data(), file_header.size(), "Snapshot header write failed");
 
-        command_buf.reserve(total_size + SNAPSHOT_HEADER_SIZE);
-
-        auto append_u32 = [&command_buf](uint32_t val) {
-            uint8_t* bytes = reinterpret_cast<uint8_t*>(&val);
-            for (int i = 0; i < 4; i++) {
-                command_buf.push_back(bytes[i]);
-            }
-        };
-
-        append_u32(total_size);
-        append_u32(checksum);
-        command_buf.push_back(SNAPSHOT_OPCODE_SET);
-        append_u32(key_len);
-        command_buf.insert(command_buf.end(), key.begin(), key.end());
-        append_u32(val_len);
-        command_buf.insert(command_buf.end(), value.begin(), value.end());
-
-        size_t sent = 0;
-        while(sent < command_buf.size()) {
-            ssize_t w = ::write(fd, command_buf.data() + sent, command_buf.size() - sent);
-            if (w == -1) {
-                if (errno == EINTR) continue;
-                int saved_errno = errno;
-                close(fd);
-                throw std::system_error(saved_errno, std::generic_category(), "Snapshot write failed");
-            }
-            sent += static_cast<size_t>(w);
+        for (const auto& [key, value] : entries) {
+            std::vector<uint8_t> record = encode_record(SNAPSHOT_OPCODE_SET, key, value);
+            write_all(fd, record.data(), record.size(), "Snapshot write failed");
         }
-    }
 
-    while (fsync(fd) == -1) {
-        if (errno == EINTR) continue;
-        int saved_errno = errno;
+        sync_fd(fd, "Snapshot fsync failed");
+    } catch (...) {
         close(fd);
-        throw std::system_error(saved_errno, std::generic_category(), "Snapshot fsync failed");
+        throw;
     }
 
     close(fd);
@@ -127,86 +120,42 @@ void Snapshot::recover(KVStore& store, const std::string& path) {
     if (fstat(fd, &st) == -1) {
         throw std::system_error(errno, std::generic_category(), "Failed to stat snapshot file");
     }
+    if (st.st_size < static_cast<off_t>(PERSISTENCE_FILE_HEADER_SIZE)) {
+        throw std::runtime_error("Corrupted Snapshot: truncated file header");
+    }
 
-    auto read_exact = [&fd](void* buf, size_t count) {
-        size_t bytes_read = 0;
-        char* ptr = static_cast<char*>(buf);
-
-        while (bytes_read < count) {
-            ssize_t r = ::read(fd, ptr + bytes_read, count - bytes_read);
-            if (r == 0) {
-                throw std::runtime_error("Corrupted Snapshot: unexpected EOF");
-            }
-            if (r == -1) {
-                if (errno == EINTR) continue;
-                throw std::system_error(errno, std::generic_category(), "Snapshot read failed");
-            }
-            bytes_read += static_cast<size_t>(r);
-        }
-    };
+    std::array<uint8_t, PERSISTENCE_FILE_HEADER_SIZE> file_header{};
+    read_exact(fd, file_header.data(), file_header.size(), "Snapshot header read failed");
+    validate_file_header(file_header, SNAPSHOT_MAGIC);
 
     std::vector<std::pair<std::string, std::string>> recovered_entries;
-    off_t offset = 0;
+    off_t offset = static_cast<off_t>(PERSISTENCE_FILE_HEADER_SIZE);
     const off_t file_size = st.st_size;
 
     while (offset < file_size) {
         off_t remaining = file_size - offset;
-        if (remaining < static_cast<off_t>(SNAPSHOT_HEADER_SIZE)) {
+        if (remaining < static_cast<off_t>(PERSISTENCE_RECORD_HEADER_SIZE)) {
             throw std::runtime_error("Corrupted Snapshot: truncated record header");
         }
 
-        uint32_t header[2];
-        read_exact(header, sizeof(header));
-        uint32_t total_size = header[0];
-        [[maybe_unused]] uint32_t checksum = header[1];
+        std::array<uint8_t, PERSISTENCE_RECORD_HEADER_SIZE> raw_header{};
+        read_exact(fd, raw_header.data(), raw_header.size(), "Snapshot record header read failed");
+        PersistenceRecordHeader header = decode_record_header(raw_header);
 
-        if (total_size < SNAPSHOT_MIN_PAYLOAD_SIZE || total_size > SNAPSHOT_MAX_PAYLOAD_SIZE) {
-            throw std::runtime_error("Corrupted Snapshot: invalid record size");
-        }
-
-        if (static_cast<uint64_t>(remaining - SNAPSHOT_HEADER_SIZE) < total_size) {
+        if (static_cast<uint64_t>(remaining - PERSISTENCE_RECORD_HEADER_SIZE) < header.payload_size) {
             throw std::runtime_error("Corrupted Snapshot: truncated record payload");
         }
 
-        std::vector<uint8_t> payload(total_size);
-        read_exact(payload.data(), payload.size());
+        std::vector<uint8_t> payload(header.payload_size);
+        read_exact(fd, payload.data(), payload.size(), "Snapshot payload read failed");
+        PersistenceRecord record = decode_record_payload(payload, header.checksum);
 
-        size_t payload_offset = 0;
-        auto require = [&](size_t count) {
-            if (count > payload.size() - payload_offset) {
-                throw std::runtime_error("Corrupted Snapshot: field exceeds record boundary");
-            }
-        };
-        auto read_u32 = [&]() {
-            require(sizeof(uint32_t));
-            uint32_t value;
-            std::memcpy(&value, payload.data() + payload_offset, sizeof(value));
-            payload_offset += sizeof(value);
-            return value;
-        };
-
-        require(sizeof(uint8_t));
-        uint8_t opcode = payload[payload_offset++];
-        if (opcode != SNAPSHOT_OPCODE_SET) {
+        if (record.opcode != SNAPSHOT_OPCODE_SET) {
             throw std::runtime_error("Corrupted Snapshot: encountered non-SET opcode");
         }
 
-        uint32_t key_len = read_u32();
-        require(key_len);
-        std::string key(reinterpret_cast<char*>(payload.data() + payload_offset), key_len);
-        payload_offset += key_len;
-
-        uint32_t val_len = read_u32();
-        require(val_len);
-        std::string value(reinterpret_cast<char*>(payload.data() + payload_offset), val_len);
-        payload_offset += val_len;
-
-        if (payload_offset != payload.size()) {
-            throw std::runtime_error("Corrupted Snapshot: record has trailing bytes");
-        }
-
-        recovered_entries.emplace_back(std::move(key), std::move(value));
-        offset += static_cast<off_t>(SNAPSHOT_HEADER_SIZE + total_size);
+        recovered_entries.emplace_back(std::move(record.key), std::move(record.value));
+        offset += static_cast<off_t>(PERSISTENCE_RECORD_HEADER_SIZE + header.payload_size);
     }
 
     for (auto& [key, value] : recovered_entries) {
