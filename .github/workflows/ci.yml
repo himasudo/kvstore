@@ -25,6 +25,8 @@ jobs:
           ./test_checkpoint
           ./test_wal_recovery
           ./test_snapshot_recovery
+          ./test_persistence_format
+          ./test_persistence_failpoints
 
       - name: Stress
         run: make stress

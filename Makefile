@@ -14,6 +14,7 @@ TEST_CHECKPOINT_SRC = tests/test_checkpoint.cpp src/kvstore.cpp src/dispatcher.c
 TEST_WAL_RECOVERY_SRC = tests/test_wal_recovery.cpp src/wal.cpp src/persistence_format.cpp
 TEST_SNAPSHOT_RECOVERY_SRC = tests/test_snapshot_recovery.cpp src/kvstore.cpp src/snapshot.cpp src/persistence_format.cpp
 TEST_PERSISTENCE_FORMAT_SRC = tests/test_persistence_format.cpp src/persistence_format.cpp
+TEST_FAILPOINT_SRC = tests/test_persistence_failpoints.cpp src/kvstore.cpp src/dispatcher.cpp src/wal.cpp src/snapshot.cpp src/persistence_format.cpp
 
 all: kvstore
 
@@ -23,7 +24,7 @@ kvstore: $(OBJ)
 kvstore-tsan: $(SRC)
 	$(CXX) $(TSAN_CXXFLAGS) -I include -o kvstore-tsan $(SRC)
 
-test: test_pipeline test_recovery test_mutation_ordering test_checkpoint test_wal_recovery test_snapshot_recovery test_persistence_format
+test: test_pipeline test_recovery test_mutation_ordering test_checkpoint test_wal_recovery test_snapshot_recovery test_persistence_format test_persistence_failpoints
 
 test_pipeline: $(TEST_PIPELINE_SRC)
 	$(CXX) $(TEST_CXXFLAGS) -pthread -I include -o test_pipeline $(TEST_PIPELINE_SRC)
@@ -52,6 +53,9 @@ test_snapshot_recovery: $(TEST_SNAPSHOT_RECOVERY_SRC)
 test_persistence_format: $(TEST_PERSISTENCE_FORMAT_SRC)
 	$(CXX) $(TEST_CXXFLAGS) -I include -o test_persistence_format $(TEST_PERSISTENCE_FORMAT_SRC)
 
+test_persistence_failpoints: $(TEST_FAILPOINT_SRC)
+	$(CXX) $(TEST_CXXFLAGS) -DKVSTORE_ENABLE_FAILPOINTS -pthread -I include -o test_persistence_failpoints $(TEST_FAILPOINT_SRC)
+
 test_wal_recovery-sanitize: $(TEST_WAL_RECOVERY_SRC)
 	$(CXX) $(ASAN_UBSAN_CXXFLAGS) -I include -o test_wal_recovery-sanitize $(TEST_WAL_RECOVERY_SRC)
 
@@ -61,7 +65,7 @@ test_snapshot_recovery-sanitize: $(TEST_SNAPSHOT_RECOVERY_SRC)
 test_persistence_format-sanitize: $(TEST_PERSISTENCE_FORMAT_SRC)
 	$(CXX) $(ASAN_UBSAN_CXXFLAGS) -I include -o test_persistence_format-sanitize $(TEST_PERSISTENCE_FORMAT_SRC)
 
-sanitize: test_wal_recovery-sanitize test_snapshot_recovery-sanitize test_persistence_format-sanitize
+sanitize: test_wal_recovery-sanitize test_snapshot_recovery-sanitize test_persistence_format-sanitize test_persistence_failpoints
 	./test_wal_recovery-sanitize
 	./test_snapshot_recovery-sanitize
 	./test_persistence_format-sanitize

@@ -55,3 +55,10 @@ WAL files now carry a `KVWL` format header and version number. Record payloads u
 Published snapshots are treated as complete checkpoints, not append-only logs. Recovery validates every record before applying any snapshot entry to the store.
 
 Record sizes are bounded before allocation, key/value lengths are checked against the record boundary, non-SET opcodes are rejected, and truncated headers or payloads fail recovery. Snapshot records use the same CRC32C-checked, little-endian v1 codec as WAL records, with a `KVSS` file header. If validation fails after earlier valid records, none of those records are applied to the target store.
+
+
+## Persistence crash failpoints
+
+The test build can enable compile-time persistence failpoints. They are no-ops in the normal server build.
+
+The failpoint test terminates child processes at exact boundaries after WAL write/sync, snapshot fsync/rename/directory sync, and WAL reset stages. The parent then reconstructs state from the published snapshot and WAL and checks that recovery reaches the expected state.

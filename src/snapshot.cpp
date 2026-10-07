@@ -1,4 +1,5 @@
 #include "snapshot.h"
+#include "failpoint.h"
 #include <array>
 #include <fcntl.h>
 #include <unistd.h>
@@ -88,6 +89,7 @@ void Snapshot::write(const KVStore& store, const std::string& path) {
         }
 
         sync_fd(fd, "Snapshot fsync failed");
+        crash_failpoint("snapshot_after_file_fsync");
     } catch (...) {
         close(fd);
         throw;
@@ -98,8 +100,10 @@ void Snapshot::write(const KVStore& store, const std::string& path) {
     if (std::rename(tmp_path.c_str(), path.c_str()) != 0) {
         throw std::system_error(errno, std::generic_category(), "Failed to rename snapshot tmp file");
     }
+    crash_failpoint("snapshot_after_rename");
 
     fsync_parent_directory(path);
+    crash_failpoint("snapshot_after_dir_fsync");
 }
 
 void Snapshot::recover(KVStore& store, const std::string& path) {
