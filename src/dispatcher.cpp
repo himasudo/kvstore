@@ -34,6 +34,7 @@ Dispatcher::DispatchResult Dispatcher::dispatch(const Command& command) {
             return kvstore_.del(command.args[0]);
 
         case Command::Type::CLEAR:
+            wal_.write_ahead(OPCODE_CLEAR);
             kvstore_.clear();
             return Void{};
 
