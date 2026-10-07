@@ -45,7 +45,9 @@ Writes wait while a checkpoint is created. Reads can continue.
 
 Startup recovery loads the snapshot first, then replays the WAL.
 
-Snapshot recovery validates the entire file before applying any entries; truncated or malformed published snapshots are rejected without partially mutating the store.\n\nWAL recovery validates record sizes and field boundaries before using them. A partial final WAL record is treated as a torn tail and truncated back to the last complete record. Structurally invalid complete records and unknown opcodes are rejected.
+Snapshot recovery validates the entire file before applying any entries; truncated or malformed published snapshots are rejected without partially mutating the store.
+
+WAL recovery validates record sizes and field boundaries before using them. A partial final WAL record is treated as a torn tail and truncated back to the last complete record. Structurally invalid complete records and unknown opcodes are rejected.
 
 ### Persistence format
 

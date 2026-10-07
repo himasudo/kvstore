@@ -1,6 +1,7 @@
 CXX = g++
 CXXFLAGS = -std=c++23 -Wall -Wextra -Werror -fno-omit-frame-pointer -g
 TSAN_CXXFLAGS = -std=c++23 -Wall -Wextra -Werror -fsanitize=thread -fno-omit-frame-pointer -g
+ASAN_UBSAN_CXXFLAGS = -std=c++23 -Wall -Wextra -Werror -fsanitize=address,undefined -fno-omit-frame-pointer -g
 TEST_CXXFLAGS = -std=c++23 -Wall -Wextra -Werror -g
 
 SRC = src/main.cpp src/kvstore.cpp src/parser.cpp src/dispatcher.cpp src/encoder.cpp src/server.cpp src/wal.cpp src/snapshot.cpp src/persistence_format.cpp
@@ -51,6 +52,20 @@ test_snapshot_recovery: $(TEST_SNAPSHOT_RECOVERY_SRC)
 test_persistence_format: $(TEST_PERSISTENCE_FORMAT_SRC)
 	$(CXX) $(TEST_CXXFLAGS) -I include -o test_persistence_format $(TEST_PERSISTENCE_FORMAT_SRC)
 
+test_wal_recovery-sanitize: $(TEST_WAL_RECOVERY_SRC)
+	$(CXX) $(ASAN_UBSAN_CXXFLAGS) -I include -o test_wal_recovery-sanitize $(TEST_WAL_RECOVERY_SRC)
+
+test_snapshot_recovery-sanitize: $(TEST_SNAPSHOT_RECOVERY_SRC)
+	$(CXX) $(ASAN_UBSAN_CXXFLAGS) -I include -o test_snapshot_recovery-sanitize $(TEST_SNAPSHOT_RECOVERY_SRC)
+
+test_persistence_format-sanitize: $(TEST_PERSISTENCE_FORMAT_SRC)
+	$(CXX) $(ASAN_UBSAN_CXXFLAGS) -I include -o test_persistence_format-sanitize $(TEST_PERSISTENCE_FORMAT_SRC)
+
+sanitize: test_wal_recovery-sanitize test_snapshot_recovery-sanitize test_persistence_format-sanitize
+	./test_wal_recovery-sanitize
+	./test_snapshot_recovery-sanitize
+	./test_persistence_format-sanitize
+
 stress: test_mutation_ordering test_checkpoint
 	./test_mutation_ordering 100
 	./test_checkpoint
@@ -59,4 +74,4 @@ stress: test_mutation_ordering test_checkpoint
 	$(CXX) $(CXXFLAGS) -I include -c $< -o $@
 
 clean:
-	rm -f $(OBJ) kvstore kvstore-tsan test_pipeline test_recovery test_mutation_ordering test_mutation_ordering-tsan test_checkpoint test_checkpoint-tsan test_wal_recovery test_snapshot_recovery test_persistence_format
+	rm -f $(OBJ) kvstore kvstore-tsan test_pipeline test_recovery test_mutation_ordering test_mutation_ordering-tsan test_checkpoint test_checkpoint-tsan test_wal_recovery test_snapshot_recovery test_persistence_format test_wal_recovery-sanitize test_snapshot_recovery-sanitize test_persistence_format-sanitize

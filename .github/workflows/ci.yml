@@ -31,3 +31,22 @@ jobs:
 
       - name: Crash/restart recovery
         run: python3 tests/test_crash_recovery.py ./kvstore
+
+  sanitizers:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Address/undefined behavior sanitizers
+        run: make sanitize
+
+      - name: ThreadSanitizer mutation ordering
+        run: |
+          make test_mutation_ordering-tsan
+          ./test_mutation_ordering-tsan
+
+      - name: ThreadSanitizer checkpointing
+        run: |
+          make test_checkpoint-tsan
+          ./test_checkpoint-tsan
