@@ -6,6 +6,7 @@
 
 inline constexpr uint8_t OPCODE_SET = 0;
 inline constexpr uint8_t OPCODE_DEL = 1;
+inline constexpr uint8_t OPCODE_CLEAR = 2;
 
 class WAL {
     public:
@@ -13,7 +14,7 @@ class WAL {
         WAL(const std::string& path);
         ~WAL();
 
-        void write_ahead(uint8_t opcode, const std::string& key, const std::string& value = "");
+        void write_ahead(uint8_t opcode, const std::string& key = "", const std::string& value = "");
         std::vector<Command> recover();
         void reset();
     private:
