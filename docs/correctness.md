@@ -48,3 +48,10 @@ WAL recovery treats the file as untrusted input. Before allocating a record payl
 A partial final header or payload is treated as a torn tail. Recovery truncates the file back to the last complete record and fsyncs that repair. Structural corruption inside a complete record, an unknown opcode, or invalid command-specific fields is treated as corruption rather than silently skipped.
 
 The record checksum field is still reserved and format versioning has not been added yet. Those are the next disk-format changes.
+
+
+## Snapshot recovery boundaries
+
+Published snapshots are treated as complete checkpoints, not append-only logs. Recovery validates every record before applying any snapshot entry to the store.
+
+Record sizes are bounded before allocation, key/value lengths are checked against the record boundary, non-SET opcodes are rejected, and truncated headers or payloads fail recovery. If validation fails after earlier valid records, none of those records are applied to the target store.

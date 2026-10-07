@@ -45,7 +45,7 @@ Writes wait while a checkpoint is created. Reads can continue.
 
 Startup recovery loads the snapshot first, then replays the WAL.
 
-WAL recovery validates record sizes and field boundaries before using them. A partial final WAL record is treated as a torn tail and truncated back to the last complete record. Structurally invalid complete records and unknown opcodes are rejected.
+Snapshot recovery validates the entire file before applying any entries; truncated or malformed published snapshots are rejected without partially mutating the store.\n\nWAL recovery validates record sizes and field boundaries before using them. A partial final WAL record is treated as a torn tail and truncated back to the last complete record. Structurally invalid complete records and unknown opcodes are rejected.
 
 ### WAL record format
 
@@ -129,7 +129,7 @@ Build the test binaries:
 make test
 ```
 
-The suite covers the command pipeline, WAL recovery, concurrent mutation ordering, checkpoint/write races, and malformed or torn WAL records.
+The suite covers the command pipeline, WAL and snapshot recovery, concurrent mutation ordering, checkpoint/write races, and malformed or torn persistence records.
 
 For a longer concurrent ordering run:
 
