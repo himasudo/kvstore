@@ -28,3 +28,6 @@ jobs:
 
       - name: Stress
         run: make stress
+
+      - name: Crash/restart recovery
+        run: python3 tests/test_crash_recovery.py ./kvstore
