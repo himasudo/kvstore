@@ -1,6 +1,7 @@
 #pragma once
 
 #include <expected>
+#include <mutex>
 #include <string>
 #include <variant>
 #include <vector>
@@ -14,6 +15,7 @@ class Dispatcher {
     private:
         KVStore& kvstore_;
         WAL& wal_;
+        std::mutex mutation_mutex_;
     public:
         Dispatcher(KVStore& kvstore, WAL& wal): kvstore_(kvstore), wal_(wal) {};
         using ResultValue = std::variant<std::monostate, Void, bool, int, std::string, std::vector<std::string>>;

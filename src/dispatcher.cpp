@@ -2,11 +2,14 @@
 
 Dispatcher::DispatchResult Dispatcher::dispatch(const Command& command) {
     switch(command.type) {
-        case Command::Type::SET:
+        case Command::Type::SET: {
             if (command.args.size() != 2) return std::unexpected("Error[Dispatcher Error]: SET requires a key and a value argument");
+
+            std::lock_guard<std::mutex> lock(mutation_mutex_);
             wal_.write_ahead(OPCODE_SET, command.args[0], command.args[1]);
             kvstore_.set(command.args[0], command.args[1]);
             return Void{};
+        }
 
         case Command::Type::GET: {
             if (command.args.empty()) return std::unexpected("Error[Dispatcher Error]: GET requires a key");
@@ -28,15 +31,20 @@ Dispatcher::DispatchResult Dispatcher::dispatch(const Command& command) {
             if (command.args.empty()) return std::unexpected("Error[Dispatcher Error]: EXISTS requires a key");
             return kvstore_.exists(command.args[0]);
 
-        case Command::Type::DEL:
+        case Command::Type::DEL: {
             if (command.args.empty()) return std::unexpected("Error[Dispatcher Error]: DEL requires a key");
+
+            std::lock_guard<std::mutex> lock(mutation_mutex_);
             wal_.write_ahead(OPCODE_DEL, command.args[0]);
             return kvstore_.del(command.args[0]);
+        }
 
-        case Command::Type::CLEAR:
+        case Command::Type::CLEAR: {
+            std::lock_guard<std::mutex> lock(mutation_mutex_);
             wal_.write_ahead(OPCODE_CLEAR);
             kvstore_.clear();
             return Void{};
+        }
 
         default:
             return std::unexpected("Error[Dispatcher Error] Unknown command type");
