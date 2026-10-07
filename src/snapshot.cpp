@@ -1,5 +1,6 @@
 #include "snapshot.h"
 #include "failpoint.h"
+#include "io_fault.h"
 #include <array>
 #include <fcntl.h>
 #include <unistd.h>
@@ -13,10 +14,12 @@
 
 static constexpr std::array<uint8_t, 4> SNAPSHOT_MAGIC{'K', 'V', 'S', 'S'};
 
-static void write_all(int fd, const uint8_t* data, size_t size, const char* error_message) {
+static void write_all(int fd, const uint8_t* data, size_t size,
+                      const char* error_message, const char* fault_point) {
     size_t written = 0;
     while (written < size) {
-        ssize_t result = write(fd, data + written, size - written);
+        ssize_t result = persistence_write(
+            fd, data + written, size - written, fault_point);
         if (result == -1) {
             if (errno == EINTR) continue;
             throw std::system_error(errno, std::generic_category(), error_message);
@@ -44,8 +47,8 @@ static void read_exact(int fd, void* buf, size_t count, const char* error_messag
     }
 }
 
-static void sync_fd(int fd, const char* error_message) {
-    while (fsync(fd) == -1) {
+static void sync_fd(int fd, const char* error_message, const char* fault_point) {
+    while (persistence_fsync(fd, fault_point) == -1) {
         if (errno == EINTR) continue;
         throw std::system_error(errno, std::generic_category(), error_message);
     }
@@ -63,7 +66,7 @@ static void fsync_parent_directory(const std::string& path) {
     }
 
     try {
-        sync_fd(dir_fd, "Snapshot directory fsync failed");
+        sync_fd(dir_fd, "Snapshot directory fsync failed", "snapshot_dir_fsync");
     } catch (...) {
         close(dir_fd);
         throw;
@@ -81,14 +84,16 @@ void Snapshot::write(const KVStore& store, const std::string& path) {
 
     try {
         auto file_header = make_file_header(SNAPSHOT_MAGIC);
-        write_all(fd, file_header.data(), file_header.size(), "Snapshot header write failed");
+        write_all(fd, file_header.data(), file_header.size(),
+                  "Snapshot header write failed", "snapshot_write");
 
         for (const auto& [key, value] : entries) {
             std::vector<uint8_t> record = encode_record(SNAPSHOT_OPCODE_SET, key, value);
-            write_all(fd, record.data(), record.size(), "Snapshot write failed");
+            write_all(fd, record.data(), record.size(),
+                      "Snapshot write failed", "snapshot_write");
         }
 
-        sync_fd(fd, "Snapshot fsync failed");
+        sync_fd(fd, "Snapshot fsync failed", "snapshot_file_fsync");
         crash_failpoint("snapshot_after_file_fsync");
     } catch (...) {
         close(fd);
@@ -97,7 +102,8 @@ void Snapshot::write(const KVStore& store, const std::string& path) {
 
     close(fd);
 
-    if (std::rename(tmp_path.c_str(), path.c_str()) != 0) {
+    if (persistence_rename(
+            tmp_path.c_str(), path.c_str(), "snapshot_rename") != 0) {
         throw std::system_error(errno, std::generic_category(), "Failed to rename snapshot tmp file");
     }
     crash_failpoint("snapshot_after_rename");

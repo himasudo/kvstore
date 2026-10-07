@@ -132,7 +132,7 @@ Build the test binaries:
 make test
 ```
 
-The suite covers the command pipeline, WAL and snapshot recovery, record-format integrity, concurrent mutation ordering, checkpoint/write races, deterministic crash points, and malformed or torn persistence records.
+The suite covers the command pipeline, WAL and snapshot recovery, record-format integrity, concurrent mutation ordering, checkpoint/write races, deterministic crash points, injected I/O failures, and malformed or torn persistence records.
 
 For a longer concurrent ordering run:
 

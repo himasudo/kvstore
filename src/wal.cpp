@@ -1,5 +1,6 @@
 #include "wal.h"
 #include "failpoint.h"
+#include "io_fault.h"
 #include <array>
 #include <fcntl.h>
 #include <unistd.h>
@@ -11,10 +12,12 @@
 
 static constexpr std::array<uint8_t, 4> WAL_MAGIC{'K', 'V', 'W', 'L'};
 
-static void write_all(int fd, const uint8_t* data, size_t size, const char* error_message) {
+static void write_all(int fd, const uint8_t* data, size_t size,
+                      const char* error_message, const char* fault_point) {
     size_t written = 0;
     while (written < size) {
-        ssize_t result = write(fd, data + written, size - written);
+        ssize_t result = persistence_write(
+            fd, data + written, size - written, fault_point);
         if (result == -1) {
             if (errno == EINTR) continue;
             throw std::system_error(errno, std::generic_category(), error_message);
@@ -42,8 +45,8 @@ static void read_exact(int fd, void* buf, size_t count, const char* error_messag
     }
 }
 
-static void sync_fd(int fd, const char* error_message) {
-    while (fsync(fd) == -1) {
+static void sync_fd(int fd, const char* error_message, const char* fault_point) {
+    while (persistence_fsync(fd, fault_point) == -1) {
         if (errno == EINTR) continue;
         throw std::system_error(errno, std::generic_category(), error_message);
     }
@@ -51,7 +54,8 @@ static void sync_fd(int fd, const char* error_message) {
 
 static void write_wal_header(int fd) {
     auto header = make_file_header(WAL_MAGIC);
-    write_all(fd, header.data(), header.size(), "WAL header write failed");
+    write_all(fd, header.data(), header.size(),
+              "WAL header write failed", "wal_header_write");
 }
 
 WAL::WAL() : fd_(-1) {}
@@ -69,11 +73,11 @@ WAL::WAL(const std::string& path) : fd_(-1) {
         }
 
         if (st.st_size < static_cast<off_t>(PERSISTENCE_FILE_HEADER_SIZE)) {
-            if (ftruncate(fd, 0) == -1) {
+            if (persistence_ftruncate(fd, 0, "wal_header_truncate") == -1) {
                 throw std::system_error(errno, std::generic_category(), "Failed to repair torn WAL header");
             }
             write_wal_header(fd);
-            sync_fd(fd, "WAL header fsync failed");
+            sync_fd(fd, "WAL header fsync failed", "wal_header_fsync");
         } else {
             if (lseek(fd, 0, SEEK_SET) == -1) {
                 throw std::system_error(errno, std::generic_category(), "Failed to seek to WAL header");
@@ -114,9 +118,10 @@ void WAL::write_ahead(uint8_t opcode, const std::string& key, const std::string&
     }
 
     std::vector<uint8_t> record = encode_record(opcode, key, value);
-    write_all(fd_, record.data(), record.size(), "WAL write failed");
+    write_all(fd_, record.data(), record.size(),
+              "WAL write failed", "wal_record_write");
     crash_failpoint("wal_after_write");
-    sync_fd(fd_, "WAL fsync failed");
+    sync_fd(fd_, "WAL fsync failed", "wal_record_fsync");
     crash_failpoint("wal_after_fsync");
 }
 
@@ -133,10 +138,10 @@ std::vector<Command> WAL::recover() {
     }
 
     auto truncate_torn_tail = [this](off_t offset) {
-        if (ftruncate(fd_, offset) == -1) {
+        if (persistence_ftruncate(fd_, offset, "wal_repair_truncate") == -1) {
             throw std::system_error(errno, std::generic_category(), "Failed to truncate torn WAL tail");
         }
-        sync_fd(fd_, "Failed to sync repaired WAL");
+        sync_fd(fd_, "Failed to sync repaired WAL", "wal_repair_fsync");
     };
 
     off_t offset = static_cast<off_t>(PERSISTENCE_FILE_HEADER_SIZE);
@@ -198,7 +203,7 @@ std::vector<Command> WAL::recover() {
 void WAL::reset() {
     if (fd_ == -1) return;
 
-    if (ftruncate(fd_, 0) == -1) {
+    if (persistence_ftruncate(fd_, 0, "wal_reset_truncate") == -1) {
         throw std::system_error(errno, std::generic_category(), "Failed to truncate WAL");
     }
     crash_failpoint("wal_reset_after_truncate");
@@ -208,7 +213,7 @@ void WAL::reset() {
 
     write_wal_header(fd_);
     crash_failpoint("wal_reset_after_header_write");
-    sync_fd(fd_, "Failed to sync reset WAL");
+    sync_fd(fd_, "Failed to sync reset WAL", "wal_reset_fsync");
 
     if (lseek(fd_, 0, SEEK_END) == -1) {
         throw std::system_error(errno, std::generic_category(), "Failed to seek to end of reset WAL");

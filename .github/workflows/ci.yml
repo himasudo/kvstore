@@ -27,6 +27,7 @@ jobs:
           ./test_snapshot_recovery
           ./test_persistence_format
           ./test_persistence_failpoints
+          ./test_io_faults
 
       - name: Stress
         run: make stress

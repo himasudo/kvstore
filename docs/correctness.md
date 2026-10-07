@@ -62,3 +62,10 @@ Record sizes are bounded before allocation, key/value lengths are checked agains
 The test build can enable compile-time persistence failpoints. They are no-ops in the normal server build.
 
 The failpoint test terminates child processes at exact boundaries after WAL write/sync, snapshot fsync/rename/directory sync, and WAL reset stages. The parent then reconstructs state from the published snapshot and WAL and checks that recovery reaches the expected state.
+
+
+## Persistence I/O fault injection
+
+A test-only build can inject one short write, one interrupted syscall, or hard write/fsync/rename/truncate failures. Production builds compile these hooks down to direct syscall wrappers.
+
+The fault-injection test verifies that transient short writes and EINTR are retried, failed WAL persistence does not mutate the live store, and checkpoint failures leave snapshot + WAL recovery at the previously committed state.
