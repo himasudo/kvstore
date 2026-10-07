@@ -47,7 +47,7 @@ WAL recovery treats the file as untrusted input. Before allocating a record payl
 
 A partial final header or payload is treated as a torn tail. Recovery truncates the file back to the last complete record and fsyncs that repair. Structural corruption inside a complete record, an unknown opcode, or invalid command-specific fields is treated as corruption rather than silently skipped.
 
-The record checksum field is still reserved and format versioning has not been added yet. Those are the next disk-format changes.
+WAL files now carry a `KVWL` format header and version number. Record payloads use CRC32C and are verified before decoding. Multi-byte fields in the versioned WAL format are encoded little-endian. Unrecognized magic or format versions are rejected.
 
 
 ## Snapshot recovery boundaries

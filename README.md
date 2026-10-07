@@ -47,16 +47,14 @@ Startup recovery loads the snapshot first, then replays the WAL.
 
 Snapshot recovery validates the entire file before applying any entries; truncated or malformed published snapshots are rejected without partially mutating the store.\n\nWAL recovery validates record sizes and field boundaries before using them. A partial final WAL record is treated as a torn tail and truncated back to the last complete record. Structurally invalid complete records and unknown opcodes are rejected.
 
-### WAL record format
+### WAL format
 
 ```text
-| length (4B) | checksum (4B) | opcode (1B) | key_len (4B) | key | value_len (4B) | value |
+file:   | KVWL (4B) | version (4B) | records... |
+record: | length (4B) | CRC32C (4B) | opcode (1B) | key_len (4B) | key | value_len (4B) | value |
 ```
 
-- `length` is the payload size
-- `checksum` is currently unused
-- opcodes: `0x00 SET`, `0x01 DEL`, `0x02 CLEAR`
-- WAL payloads are bounded before allocation
+All integer fields are little-endian. WAL records are checksummed before replay, and unsupported format versions are rejected. Opcodes are `0x00 SET`, `0x01 DEL`, and `0x02 CLEAR`.
 
 ## Networking
 
@@ -129,7 +127,7 @@ Build the test binaries:
 make test
 ```
 
-The suite covers the command pipeline, WAL and snapshot recovery, concurrent mutation ordering, checkpoint/write races, and malformed or torn persistence records.
+The suite covers the command pipeline, WAL and snapshot recovery, record-format integrity, concurrent mutation ordering, checkpoint/write races, and malformed or torn persistence records.
 
 For a longer concurrent ordering run:
 
