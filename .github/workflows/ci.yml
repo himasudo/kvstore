@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: make
+
+      - name: Build tests
+        run: make test
+
+      - name: Run tests
+        run: |
+          ./test_pipeline
+          ./test_recovery
+          ./test_mutation_ordering
+          ./test_checkpoint
+          ./test_wal_recovery
+          ./test_snapshot_recovery
+
+      - name: Stress
+        run: make stress
