@@ -33,6 +33,9 @@ jobs:
       - name: TCP protocol integration
         run: python3 tests/test_tcp_protocol.py ./kvstore
 
+      - name: Multi-client and backpressure stress
+        run: python3 tests/test_network_stress.py ./kvstore
+
       - name: Stress
         run: make stress
 
