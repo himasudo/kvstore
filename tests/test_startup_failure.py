@@ -12,6 +12,8 @@ import tempfile
 
 def run(binary: str) -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as blocker:
+        # Prior test connections can leave TIME_WAIT entries on port 6379.
+        blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         blocker.bind(("127.0.0.1", 6379))
         blocker.listen(1)
 
