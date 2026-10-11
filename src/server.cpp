@@ -221,10 +221,12 @@ int run_server(Dispatcher& dispatcher) {
     };
 
     epoll_event events[64]{};
+    int exit_status = 0;
     while (keep_running) {
         int ready = epoll_wait(epfd, events, 64, 1000);
         if (ready == -1) {
             if (errno == EINTR) continue;
+            exit_status = -1;
             break;
         }
 
@@ -240,6 +242,7 @@ int run_server(Dispatcher& dispatcher) {
 
             if (fd == server_fd) {
                 if (mask & (EPOLLERR | EPOLLHUP)) {
+                    exit_status = -1;
                     should_shutdown = true;
                     break;
                 }
@@ -356,5 +359,5 @@ int run_server(Dispatcher& dispatcher) {
     }
     close(epfd);
     close(server_fd);
-    return 0;
+    return exit_status;
 }

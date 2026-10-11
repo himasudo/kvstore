@@ -17,7 +17,7 @@
 std::atomic<bool> keep_running{true};
 int shutdown_fd = -1;
 
-void handle_sigint(int) {
+void request_shutdown() {
     keep_running = false;
 
     if (shutdown_fd != -1) {
@@ -25,6 +25,10 @@ void handle_sigint(int) {
         ssize_t res = write(shutdown_fd, &wake_signal, sizeof(wake_signal));
         (void)res;
     }
+}
+
+void handle_sigint(int) {
+    request_shutdown();
 }
 
 void snapshot_worker(Dispatcher& dispatcher) {
@@ -105,8 +109,16 @@ int main() {
     std::vector<std::thread> threads;
     threads.reserve(num_threads);
 
+    std::atomic<bool> worker_failed{false};
     for (unsigned int i = 0; i < num_threads; ++i) {
-        threads.emplace_back(run_server, std::ref(dispatcher));
+        threads.emplace_back([&] {
+            if (run_server(dispatcher) != 0) {
+                if (!worker_failed.exchange(true)) {
+                    std::cerr << "Network worker failed; shutting down server." << std::endl;
+                    request_shutdown();
+                }
+            }
+        });
     }
 
     for (auto& t : threads) {
@@ -118,5 +130,5 @@ int main() {
     }
     if (shutdown_fd != -1) close(shutdown_fd);
     std::cout << "Server completely shut down." << std::endl;
-    return 0;
+    return worker_failed ? 1 : 0;
 }
