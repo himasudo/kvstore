@@ -30,6 +30,9 @@ jobs:
           ./test_io_faults
           ./test_parser_incremental
 
+      - name: TCP protocol integration
+        run: python3 tests/test_tcp_protocol.py ./kvstore
+
       - name: Stress
         run: make stress
 
