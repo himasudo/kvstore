@@ -28,6 +28,7 @@ jobs:
           ./test_persistence_format
           ./test_persistence_failpoints
           ./test_io_faults
+          ./test_parser_incremental
 
       - name: Stress
         run: make stress
