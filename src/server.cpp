@@ -260,6 +260,7 @@ int run_server(Dispatcher& dispatcher) {
                 // no more readable socket bytes to wake EPOLLIN.
                 while (true) {
                     const size_t input_before = conn.input.size();
+                    const size_t pending_before = conn.pending();
                     if (!conn.close_after_write &&
                         conn.pending() < OUTPUT_HIGH_WATER) {
                         process_input(conn, dispatcher);
@@ -270,10 +271,12 @@ int run_server(Dispatcher& dispatcher) {
                         break;
                     }
 
-                    // EAGAIN requires EPOLLOUT; an incomplete command requires
-                    // EPOLLIN. Otherwise keep draining complete buffered input.
+                    // EAGAIN waits for EPOLLOUT; incomplete input waits for
+                    // EPOLLIN. Flushing queued bytes is progress too: it may
+                    // make room to parse more already-buffered commands.
                     if (conn.pending() != 0 || conn.close_after_write ||
-                        conn.input.empty() || conn.input.size() == input_before) {
+                        conn.input.empty() ||
+                        (conn.input.size() == input_before && pending_before == 0)) {
                         break;
                     }
                 }
