@@ -28,6 +28,21 @@ jobs:
           ./test_persistence_format
           ./test_persistence_failpoints
           ./test_io_faults
+          ./test_parser_incremental
+
+      - name: TCP protocol integration
+        run: python3 tests/test_tcp_protocol.py ./kvstore
+
+      - name: Multi-client and backpressure stress
+        run: python3 tests/test_network_stress.py ./kvstore
+
+      - name: Listener bind-failure regression
+        run: python3 tests/test_startup_failure.py ./kvstore
+
+      - name: Network syscall failure injection
+        run: |
+          make kvstore-netfault
+          python3 tests/test_network_faults.py ./kvstore-netfault
 
       - name: Stress
         run: make stress
@@ -43,6 +58,11 @@ jobs:
 
       - name: Address/undefined behavior sanitizers
         run: make sanitize
+
+      - name: Network Address/UndefinedBehaviorSanitizer integration
+        run: |
+          make kvstore-network-sanitize
+          python3 tests/test_tcp_protocol.py ./kvstore-network-sanitize
 
       - name: ThreadSanitizer mutation ordering
         run: |

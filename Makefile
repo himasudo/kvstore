@@ -15,6 +15,7 @@ TEST_WAL_RECOVERY_SRC = tests/test_wal_recovery.cpp src/wal.cpp src/persistence_
 TEST_SNAPSHOT_RECOVERY_SRC = tests/test_snapshot_recovery.cpp src/kvstore.cpp src/snapshot.cpp src/persistence_format.cpp
 TEST_PERSISTENCE_FORMAT_SRC = tests/test_persistence_format.cpp src/persistence_format.cpp
 TEST_FAILPOINT_SRC = tests/test_persistence_failpoints.cpp src/kvstore.cpp src/dispatcher.cpp src/wal.cpp src/snapshot.cpp src/persistence_format.cpp
+TEST_PARSER_SRC = tests/test_parser_incremental.cpp src/parser.cpp
 TEST_IO_FAULT_SRC = tests/test_io_faults.cpp src/kvstore.cpp src/dispatcher.cpp src/wal.cpp src/snapshot.cpp src/persistence_format.cpp
 
 all: kvstore
@@ -25,7 +26,13 @@ kvstore: $(OBJ)
 kvstore-tsan: $(SRC)
 	$(CXX) $(TSAN_CXXFLAGS) -I include -o kvstore-tsan $(SRC)
 
-test: test_pipeline test_recovery test_mutation_ordering test_checkpoint test_wal_recovery test_snapshot_recovery test_persistence_format test_persistence_failpoints test_io_faults
+kvstore-network-sanitize: $(SRC)
+	$(CXX) $(ASAN_UBSAN_CXXFLAGS) -pthread -I include -o kvstore-network-sanitize $(SRC)
+
+kvstore-netfault: $(SRC)
+	$(CXX) $(CXXFLAGS) -DKVSTORE_ENABLE_NET_FAULTS -pthread -I include -o kvstore-netfault $(SRC)
+
+test: test_pipeline test_recovery test_mutation_ordering test_checkpoint test_wal_recovery test_snapshot_recovery test_persistence_format test_persistence_failpoints test_io_faults test_parser_incremental
 
 test_pipeline: $(TEST_PIPELINE_SRC)
 	$(CXX) $(TEST_CXXFLAGS) -pthread -I include -o test_pipeline $(TEST_PIPELINE_SRC)
@@ -44,6 +51,9 @@ test_checkpoint: $(TEST_CHECKPOINT_SRC)
 
 test_checkpoint-tsan: $(TEST_CHECKPOINT_SRC)
 	$(CXX) $(TSAN_CXXFLAGS) -pthread -I include -o test_checkpoint-tsan $(TEST_CHECKPOINT_SRC)
+
+test_parser_incremental: $(TEST_PARSER_SRC)
+	$(CXX) $(TEST_CXXFLAGS) -I include -o test_parser_incremental $(TEST_PARSER_SRC)
 
 test_wal_recovery: $(TEST_WAL_RECOVERY_SRC)
 	$(CXX) $(TEST_CXXFLAGS) -I include -o test_wal_recovery $(TEST_WAL_RECOVERY_SRC)
@@ -66,13 +76,17 @@ test_wal_recovery-sanitize: $(TEST_WAL_RECOVERY_SRC)
 test_snapshot_recovery-sanitize: $(TEST_SNAPSHOT_RECOVERY_SRC)
 	$(CXX) $(ASAN_UBSAN_CXXFLAGS) -I include -o test_snapshot_recovery-sanitize $(TEST_SNAPSHOT_RECOVERY_SRC)
 
+test_parser_incremental-sanitize: $(TEST_PARSER_SRC)
+	$(CXX) $(ASAN_UBSAN_CXXFLAGS) -I include -o test_parser_incremental-sanitize $(TEST_PARSER_SRC)
+
 test_persistence_format-sanitize: $(TEST_PERSISTENCE_FORMAT_SRC)
 	$(CXX) $(ASAN_UBSAN_CXXFLAGS) -I include -o test_persistence_format-sanitize $(TEST_PERSISTENCE_FORMAT_SRC)
 
-sanitize: test_wal_recovery-sanitize test_snapshot_recovery-sanitize test_persistence_format-sanitize test_io_faults test_persistence_failpoints
+sanitize: test_wal_recovery-sanitize test_snapshot_recovery-sanitize test_persistence_format-sanitize test_parser_incremental-sanitize test_io_faults test_persistence_failpoints
 	./test_wal_recovery-sanitize
 	./test_snapshot_recovery-sanitize
 	./test_persistence_format-sanitize
+	./test_parser_incremental-sanitize
 
 stress: test_mutation_ordering test_checkpoint
 	./test_mutation_ordering 100
@@ -82,4 +96,4 @@ stress: test_mutation_ordering test_checkpoint
 	$(CXX) $(CXXFLAGS) -I include -c $< -o $@
 
 clean:
-	rm -f $(OBJ) kvstore kvstore-tsan test_pipeline test_recovery test_mutation_ordering test_mutation_ordering-tsan test_checkpoint test_checkpoint-tsan test_wal_recovery test_snapshot_recovery test_persistence_format test_wal_recovery-sanitize test_snapshot_recovery-sanitize test_persistence_format-sanitize
+	rm -f $(OBJ) kvstore kvstore-tsan kvstore-netfault kvstore-network-sanitize test_pipeline test_recovery test_mutation_ordering test_mutation_ordering-tsan test_checkpoint test_checkpoint-tsan test_wal_recovery test_snapshot_recovery test_persistence_format test_wal_recovery-sanitize test_snapshot_recovery-sanitize test_persistence_format-sanitize test_parser_incremental test_parser_incremental-sanitize
