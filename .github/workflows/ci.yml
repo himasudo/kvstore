@@ -36,6 +36,11 @@ jobs:
       - name: Multi-client and backpressure stress
         run: python3 tests/test_network_stress.py ./kvstore
 
+      - name: Network syscall failure injection
+        run: |
+          make kvstore-netfault
+          python3 tests/test_network_faults.py ./kvstore-netfault
+
       - name: Stress
         run: make stress
 

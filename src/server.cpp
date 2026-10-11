@@ -22,6 +22,52 @@ namespace {
 constexpr size_t OUTPUT_HIGH_WATER = 512 * 1024;
 constexpr size_t MAX_OUTPUT_BUFFER = 4 * 1024 * 1024;
 
+
+#ifdef KVSTORE_ENABLE_NET_FAULTS
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+bool take_net_fault(const char* name) {
+    static std::atomic<bool> fired{false};
+    const char* configured = std::getenv("KVSTORE_NET_FAULT");
+    if (!configured || std::strcmp(configured, name) != 0) return false;
+
+    bool expected = false;
+    if (!fired.compare_exchange_strong(expected, true)) return false;
+    std::fprintf(stderr, "NET_FAULT_TRIGGERED:%s\n", name);
+    return true;
+}
+#endif
+
+ssize_t socket_read(int fd, void* buf, size_t count) {
+#ifdef KVSTORE_ENABLE_NET_FAULTS
+    if (take_net_fault("read_eintr")) { errno = EINTR; return -1; }
+    if (take_net_fault("read_eagain")) { errno = EAGAIN; return -1; }
+#endif
+    return ::read(fd, buf, count);
+}
+
+ssize_t socket_send(int fd, const void* buf, size_t count) {
+#ifdef KVSTORE_ENABLE_NET_FAULTS
+    if (take_net_fault("send_eintr")) { errno = EINTR; return -1; }
+    if (take_net_fault("send_eagain")) { errno = EAGAIN; return -1; }
+    if (take_net_fault("send_eio")) { errno = EIO; return -1; }
+    if (count > 1 && take_net_fault("send_short")) {
+        return ::send(fd, buf, count / 2, MSG_NOSIGNAL);
+    }
+#endif
+    return ::send(fd, buf, count, MSG_NOSIGNAL);
+}
+
+int socket_accept(int listener) {
+#ifdef KVSTORE_ENABLE_NET_FAULTS
+    if (take_net_fault("accept_eintr")) { errno = EINTR; return -1; }
+    if (take_net_fault("accept_eagain")) { errno = EAGAIN; return -1; }
+#endif
+    return ::accept4(listener, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
+}
+
 struct Connection {
     std::string input;
     std::string output;
@@ -43,8 +89,8 @@ struct Connection {
 
 bool flush_output(int fd, Connection& conn) {
     while (conn.pending() != 0) {
-        ssize_t n = send(fd, conn.output.data() + conn.sent,
-                         conn.pending(), MSG_NOSIGNAL);
+        ssize_t n = socket_send(fd, conn.output.data() + conn.sent,
+                                conn.pending());
         if (n > 0) {
             conn.sent += static_cast<size_t>(n);
             conn.last_active = std::chrono::steady_clock::now();
@@ -196,8 +242,7 @@ int run_server(Dispatcher& dispatcher) {
                     break;
                 }
                 while (true) {
-                    int client_fd = accept4(server_fd, nullptr, nullptr,
-                                            SOCK_NONBLOCK | SOCK_CLOEXEC);
+                    int client_fd = socket_accept(server_fd);
                     if (client_fd == -1) {
                         if (errno == EINTR) continue;
                         break;
@@ -230,7 +275,7 @@ int run_server(Dispatcher& dispatcher) {
                 conn.pending() < OUTPUT_HIGH_WATER) {
                 while (true) {
                     char chunk[4096];
-                    ssize_t n = read(fd, chunk, sizeof(chunk));
+                    ssize_t n = socket_read(fd, chunk, sizeof(chunk));
                     if (n > 0) {
                         conn.last_active = std::chrono::steady_clock::now();
                         conn.input.append(chunk, static_cast<size_t>(n));

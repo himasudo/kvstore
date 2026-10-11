@@ -26,6 +26,9 @@ kvstore: $(OBJ)
 kvstore-tsan: $(SRC)
 	$(CXX) $(TSAN_CXXFLAGS) -I include -o kvstore-tsan $(SRC)
 
+kvstore-netfault: $(SRC)
+	$(CXX) $(CXXFLAGS) -DKVSTORE_ENABLE_NET_FAULTS -pthread -I include -o kvstore-netfault $(SRC)
+
 test: test_pipeline test_recovery test_mutation_ordering test_checkpoint test_wal_recovery test_snapshot_recovery test_persistence_format test_persistence_failpoints test_io_faults test_parser_incremental
 
 test_pipeline: $(TEST_PIPELINE_SRC)
@@ -90,4 +93,4 @@ stress: test_mutation_ordering test_checkpoint
 	$(CXX) $(CXXFLAGS) -I include -c $< -o $@
 
 clean:
-	rm -f $(OBJ) kvstore kvstore-tsan test_pipeline test_recovery test_mutation_ordering test_mutation_ordering-tsan test_checkpoint test_checkpoint-tsan test_wal_recovery test_snapshot_recovery test_persistence_format test_wal_recovery-sanitize test_snapshot_recovery-sanitize test_persistence_format-sanitize test_parser_incremental test_parser_incremental-sanitize
+	rm -f $(OBJ) kvstore kvstore-tsan kvstore-netfault test_pipeline test_recovery test_mutation_ordering test_mutation_ordering-tsan test_checkpoint test_checkpoint-tsan test_wal_recovery test_snapshot_recovery test_persistence_format test_wal_recovery-sanitize test_snapshot_recovery-sanitize test_persistence_format-sanitize test_parser_incremental test_parser_incremental-sanitize
