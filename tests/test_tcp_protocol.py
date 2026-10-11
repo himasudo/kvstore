@@ -91,7 +91,7 @@ def run(binary: str) -> None:
 
             # Fragment the array count, bulk lengths, payload and CRLFs.
             with connect() as sock:
-                for fragment in (b"*3\r", b"\n$3\r\nSE", b"T\r\n$3\r\nf",
+                for fragment in (b"*3\r", b"\n$3\r\nSE", b"T\r\n$4\r\nf",
                                  b"rag\r\n$5\r\nval", b"ue\r", b"\n"):
                     sock.sendall(fragment)
                     time.sleep(0.004)
