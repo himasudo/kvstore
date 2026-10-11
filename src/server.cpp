@@ -255,11 +255,28 @@ int run_server(Dispatcher& dispatcher) {
                 }
             }
 
-            if (healthy && !conn.close_after_write) process_input(conn, dispatcher);
-            if (healthy) healthy = flush_output(fd, conn);
-            if (healthy && !conn.close_after_write && conn.pending() < OUTPUT_HIGH_WATER) {
-                process_input(conn, dispatcher);
-                healthy = flush_output(fd, conn);
+            if (healthy) {
+                // Buffered commands must make progress even if the kernel has
+                // no more readable socket bytes to wake EPOLLIN.
+                while (true) {
+                    const size_t input_before = conn.input.size();
+                    if (!conn.close_after_write &&
+                        conn.pending() < OUTPUT_HIGH_WATER) {
+                        process_input(conn, dispatcher);
+                    }
+
+                    if (!flush_output(fd, conn)) {
+                        healthy = false;
+                        break;
+                    }
+
+                    // EAGAIN requires EPOLLOUT; an incomplete command requires
+                    // EPOLLIN. Otherwise keep draining complete buffered input.
+                    if (conn.pending() != 0 || conn.close_after_write ||
+                        conn.input.empty() || conn.input.size() == input_before) {
+                        break;
+                    }
+                }
             }
 
             if (!healthy ||
