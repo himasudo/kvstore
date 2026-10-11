@@ -65,6 +65,8 @@ All integer fields are little-endian. Record payloads are checksummed before rep
 
 The server starts one worker per logical CPU. Each worker owns an epoll loop and its own listening socket using `SO_REUSEPORT`.
 
+Connections retain fragmented RESP requests and process pipelined commands in order. Replies are buffered across partial nonblocking sends and flushed using `EPOLLOUT`. Incoming reads pause above a 512 KiB pending-output high-water mark; half-closed clients can receive queued replies before disconnect.
+
 Connections have a bounded input buffer and are closed after 30 seconds of inactivity.
 
 The server listens on port `6379`.
@@ -133,6 +135,8 @@ make test
 ```
 
 The suite covers the command pipeline, WAL and snapshot recovery, record-format integrity, concurrent mutation ordering, checkpoint/write races, deterministic crash points, injected I/O failures, and malformed or torn persistence records.
+
+CI also exercises real TCP fragmentation, pipelining, multi-client concurrency, slow readers, listener bind failures, and injected network syscall failures, including TCP integration under ASan/UBSan.
 
 For a longer concurrent ordering run:
 
