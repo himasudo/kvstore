@@ -56,6 +56,11 @@ jobs:
       - name: Address/undefined behavior sanitizers
         run: make sanitize
 
+      - name: Network Address/UndefinedBehaviorSanitizer integration
+        run: |
+          make kvstore-network-sanitize
+          python3 tests/test_tcp_protocol.py ./kvstore-network-sanitize
+
       - name: ThreadSanitizer mutation ordering
         run: |
           make test_mutation_ordering-tsan

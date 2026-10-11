@@ -26,6 +26,9 @@ kvstore: $(OBJ)
 kvstore-tsan: $(SRC)
 	$(CXX) $(TSAN_CXXFLAGS) -I include -o kvstore-tsan $(SRC)
 
+kvstore-network-sanitize: $(SRC)
+	$(CXX) $(ASAN_UBSAN_CXXFLAGS) -pthread -I include -o kvstore-network-sanitize $(SRC)
+
 kvstore-netfault: $(SRC)
 	$(CXX) $(CXXFLAGS) -DKVSTORE_ENABLE_NET_FAULTS -pthread -I include -o kvstore-netfault $(SRC)
 
@@ -93,4 +96,4 @@ stress: test_mutation_ordering test_checkpoint
 	$(CXX) $(CXXFLAGS) -I include -c $< -o $@
 
 clean:
-	rm -f $(OBJ) kvstore kvstore-tsan kvstore-netfault test_pipeline test_recovery test_mutation_ordering test_mutation_ordering-tsan test_checkpoint test_checkpoint-tsan test_wal_recovery test_snapshot_recovery test_persistence_format test_wal_recovery-sanitize test_snapshot_recovery-sanitize test_persistence_format-sanitize test_parser_incremental test_parser_incremental-sanitize
+	rm -f $(OBJ) kvstore kvstore-tsan kvstore-netfault kvstore-network-sanitize test_pipeline test_recovery test_mutation_ordering test_mutation_ordering-tsan test_checkpoint test_checkpoint-tsan test_wal_recovery test_snapshot_recovery test_persistence_format test_wal_recovery-sanitize test_snapshot_recovery-sanitize test_persistence_format-sanitize test_parser_incremental test_parser_incremental-sanitize
