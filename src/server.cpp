@@ -14,6 +14,12 @@
 #include <variant>
 #include <vector>
 
+#ifdef KVSTORE_ENABLE_NET_FAULTS
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#endif
+
 extern int shutdown_fd;
 extern std::atomic<bool> keep_running;
 
@@ -24,10 +30,6 @@ constexpr size_t MAX_OUTPUT_BUFFER = 4 * 1024 * 1024;
 
 
 #ifdef KVSTORE_ENABLE_NET_FAULTS
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-
 bool take_net_fault(const char* name) {
     static std::atomic<bool> fired{false};
     const char* configured = std::getenv("KVSTORE_NET_FAULT");
