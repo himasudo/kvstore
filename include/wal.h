@@ -22,6 +22,8 @@ class WAL {
         void write_ahead(uint8_t opcode, const std::string& key = "", const std::string& value = "");
         std::vector<Command> recover();
         void reset();
+        void ensure_writable() const;
     private:
         int fd_;
+        bool failed_ = false; // Access is serialized by the dispatcher mutation mutex.
 };

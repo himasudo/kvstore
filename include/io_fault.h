@@ -7,11 +7,15 @@
 
 #ifdef KVSTORE_ENABLE_IO_FAULTS
 
+#include <atomic>
 #include <cstdlib>
+#include <string>
 
+// Configure KVSTORE_IO_FAULT before starting I/O threads; one matching call
+// consumes the fault process-wide. Do not mutate the environment during I/O.
 inline bool take_io_fault(const char* point, const char* suffix) {
-    static bool consumed = false;
-    if (consumed) return false;
+    static std::atomic<bool> consumed{false};
+    if (consumed.load(std::memory_order_relaxed)) return false;
 
     const char* active = std::getenv("KVSTORE_IO_FAULT");
     if (active == nullptr) return false;
@@ -22,8 +26,7 @@ inline bool take_io_fault(const char* point, const char* suffix) {
     if (std::memcmp(active, point, point_len) != 0) return false;
     if (std::memcmp(active + point_len, suffix, suffix_len) != 0) return false;
 
-    consumed = true;
-    return true;
+    return !consumed.exchange(true, std::memory_order_relaxed);
 }
 
 inline ssize_t persistence_write(int fd, const void* buf, size_t count, const char* point) {
@@ -38,6 +41,22 @@ inline ssize_t persistence_write(int fd, const void* buf, size_t count, const ch
     if (take_io_fault(point, "_eio")) {
         errno = EIO;
         return -1;
+    }
+    // The retry belongs to the writing thread and this specific I/O target.
+    static thread_local int partial_eio_fd = -1;
+    static thread_local std::string partial_eio_point;
+    if (partial_eio_fd == fd && partial_eio_point == point) {
+        partial_eio_fd = -1;
+        errno = EIO;
+        return -1;
+    }
+    if (count > 1 && take_io_fault(point, "_partial_eio")) {
+        ssize_t result = ::write(fd, buf, count / 2);
+        if (result > 0) {
+            partial_eio_point = point;
+            partial_eio_fd = fd;
+        }
+        return result;
     }
     if (take_io_fault(point, "_short") && count > 1) {
         return ::write(fd, buf, count / 2);

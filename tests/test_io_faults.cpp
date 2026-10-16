@@ -1,15 +1,20 @@
 #include <algorithm>
 #include <cassert>
+#include <atomic>
+#include <barrier>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <stdexcept>
+#include <thread>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
 
 #include "dispatcher.h"
+#include "io_fault.h"
 #include "kvstore.h"
 #include "snapshot.h"
 #include "wal.h"
@@ -98,6 +103,44 @@ static void run_transient_wal_fault(const std::string& fault,
     std::remove(wal_path.c_str());
 }
 
+template <typename F>
+static void expect_rejected(F operation) {
+    bool threw = false;
+    try {
+        operation();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    assert(threw);
+}
+
+static void verify_failed_wal(Dispatcher& dispatcher, WAL& wal, KVStore& store,
+                              const std::string& snapshot_path,
+                              const std::string& wal_path) {
+    const auto before = sorted_entries(store);
+    const auto wal_size = std::filesystem::file_size(wal_path);
+    const bool snapshot_exists = std::filesystem::exists(snapshot_path);
+    std::vector<std::thread> writers;
+    for (const auto& command : std::vector<Command>{
+             {Command::Type::SET, {"later", "value"}},
+             {Command::Type::DEL, {"shared"}},
+             {Command::Type::CLEAR, {}}}) {
+        writers.emplace_back([&, command] {
+            expect_rejected([&] { (void)dispatcher.dispatch(command); });
+        });
+    }
+    for (auto& writer : writers) writer.join();
+    Snapshot snapshot;
+    expect_rejected([&] { dispatcher.checkpoint(snapshot, snapshot_path); });
+    expect_rejected([&] { wal.reset(); });
+    expect_rejected([&] { (void)wal.recover(); });
+    expect_rejected([&] { wal.write_ahead(OPCODE_SET, "direct", "value"); });
+    assert(sorted_entries(store) == before);
+    assert(std::filesystem::file_size(wal_path) == wal_size);
+    assert(std::filesystem::exists(snapshot_path) == snapshot_exists);
+    assert(dispatcher.dispatch(Command{Command::Type::GET, {"shared"}}));
+}
+
 static void run_failed_mutation(const std::string& fault,
                                 const std::string& wal_path) {
     std::remove(wal_path.c_str());
@@ -125,10 +168,35 @@ static void run_failed_mutation(const std::string& fault,
 
         assert(threw);
         assert(store.get("shared") == std::optional<std::string>{"old"});
+        if (fault == "wal_record_write_partial_eio") {
+            const auto expected_size = PERSISTENCE_FILE_HEADER_SIZE +
+                encode_record(OPCODE_SET, "shared", "old").size() +
+                encode_record(OPCODE_SET, "shared", "new").size() / 2;
+            assert(std::filesystem::file_size(wal_path) == expected_size);
+        }
+        verify_failed_wal(dispatcher, wal, store, wal_path + ".snapshot", wal_path);
         _exit(0);
     }
 
     wait_ok(pid);
+    {
+        WAL wal(wal_path);
+        KVStore recovered;
+        replay(recovered, wal.recover());
+        assert(recovered.get("shared").has_value());
+        assert(!recovered.exists("later"));
+        if (fault != "wal_record_fsync_eio") {
+            assert(recovered.get("shared") == std::optional<std::string>{"old"});
+        }
+        Dispatcher dispatcher(recovered, wal);
+        assert(dispatcher.dispatch(Command{Command::Type::SET, {"restarted", "ok"}}));
+    }
+    {
+        WAL wal(wal_path);
+        KVStore recovered;
+        replay(recovered, wal.recover());
+        assert(recovered.get("restarted") == std::optional<std::string>{"ok"});
+    }
     std::remove(wal_path.c_str());
 }
 
@@ -169,6 +237,9 @@ static void run_checkpoint_fault(const std::string& fault,
         }
 
         assert(threw != expect_success);
+        if (fault.starts_with("wal_")) {
+            verify_failed_wal(dispatcher, wal, store, snapshot_path, wal_path);
+        }
         _exit(0);
     }
 
@@ -182,7 +253,58 @@ static void run_checkpoint_fault(const std::string& fault,
     cleanup(snapshot_path, wal_path);
 }
 
+// Each child retains the injector's process-wide, one-shot lifetime.
+static void run_concurrent_injection(bool partial) {
+    const pid_t pid = fork();
+    assert(pid >= 0);
+    if (pid == 0) {
+        assert(setenv("KVSTORE_IO_FAULT",
+                      partial ? "target_partial_eio" : "target_eio", 1) == 0);
+        FILE* first = std::tmpfile();
+        FILE* other = std::tmpfile();
+        assert(first && other);
+        const int fd = fileno(first);
+        const int other_fd = fileno(other);
+        constexpr int threads = 8;
+        std::barrier start(threads);
+        std::barrier after_write(threads);
+        std::atomic<int> injected{0};
+        std::vector<std::thread> writers;
+        for (int i = 0; i < threads; ++i) {
+            writers.emplace_back([&] {
+                start.arrive_and_wait();
+                const ssize_t result = persistence_write(fd, "abcd", 4, "target");
+                const int error = errno;
+                after_write.arrive_and_wait();
+                if (partial && result == 2) {
+                    ++injected;
+                    // Neither a different descriptor nor a different point may
+                    // consume the error owed to this thread's retry.
+                    assert(persistence_write(other_fd, "abcd", 4, "target") == 4);
+                    assert(persistence_write(fd, "abcd", 4, "other") == 4);
+                    assert(persistence_write(fd, "cd", 2, "target") == -1);
+                    assert(errno == EIO);
+                    assert(persistence_write(fd, "cd", 2, "target") == 2);
+                } else if (!partial && result == -1) {
+                    assert(error == EIO);
+                    ++injected;
+                } else {
+                    assert(result == 4);
+                }
+            });
+        }
+        for (auto& writer : writers) writer.join();
+        assert(injected == 1);
+        std::fclose(first);
+        std::fclose(other);
+        _exit(0);
+    }
+    wait_ok(pid);
+}
+
 int main() {
+    run_concurrent_injection(false);
+    run_concurrent_injection(true);
     const auto base = std::filesystem::temp_directory_path() /
         ("kvstore-io-faults-" + std::to_string(getpid()));
 
@@ -193,6 +315,8 @@ int main() {
     run_transient_wal_fault(
         "wal_record_fsync_eintr", base.string() + "-fsync-eintr.wal");
 
+    run_failed_mutation(
+        "wal_record_write_partial_eio", base.string() + "-partial-eio.wal");
     run_failed_mutation(
         "wal_record_write_enospc", base.string() + "-enospc.wal");
     run_failed_mutation(
@@ -218,6 +342,7 @@ int main() {
         "snapshot_dir_fsync_eio",
         "wal_reset_truncate_eio",
         "wal_reset_fsync_eio",
+        "wal_header_write_eio",
     };
     for (size_t i = 0; i < failed_checkpoint_faults.size(); ++i) {
         run_checkpoint_fault(
