@@ -54,6 +54,7 @@ Dispatcher::DispatchResult Dispatcher::dispatch(const Command& command) {
 
 void Dispatcher::checkpoint(Snapshot& snapshot, const std::string& path) {
     std::lock_guard<std::mutex> lock(mutation_mutex_);
+    wal_.ensure_writable();
     snapshot.write(kvstore_, path);
     wal_.reset();
 }

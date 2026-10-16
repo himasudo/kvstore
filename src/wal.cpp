@@ -104,7 +104,14 @@ WAL::~WAL() {
     }
 }
 
+void WAL::ensure_writable() const {
+    if (failed_) {
+        throw std::runtime_error("WAL persistence failed; restart and recovery required");
+    }
+}
+
 void WAL::write_ahead(uint8_t opcode, const std::string& key, const std::string& value) {
+    ensure_writable();
     if (fd_ == -1) return;
 
     if (opcode != OPCODE_SET && opcode != OPCODE_DEL && opcode != OPCODE_CLEAR) {
@@ -118,14 +125,20 @@ void WAL::write_ahead(uint8_t opcode, const std::string& key, const std::string&
     }
 
     std::vector<uint8_t> record = encode_record(opcode, key, value);
-    write_all(fd_, record.data(), record.size(),
-              "WAL write failed", "wal_record_write");
-    crash_failpoint("wal_after_write");
-    sync_fd(fd_, "WAL fsync failed", "wal_record_fsync");
-    crash_failpoint("wal_after_fsync");
+    try {
+        write_all(fd_, record.data(), record.size(),
+                  "WAL write failed", "wal_record_write");
+        crash_failpoint("wal_after_write");
+        sync_fd(fd_, "WAL fsync failed", "wal_record_fsync");
+        crash_failpoint("wal_after_fsync");
+    } catch (...) {
+        failed_ = true;
+        throw;
+    }
 }
 
-std::vector<Command> WAL::recover() {
+std::vector<Command> WAL::recover() try {
+    ensure_writable();
     std::vector<Command> commands;
 
     struct stat st{};
@@ -198,24 +211,33 @@ std::vector<Command> WAL::recover() {
     }
 
     return commands;
+} catch (...) {
+    failed_ = true;
+    throw;
 }
 
 void WAL::reset() {
+    ensure_writable();
     if (fd_ == -1) return;
 
-    if (persistence_ftruncate(fd_, 0, "wal_reset_truncate") == -1) {
-        throw std::system_error(errno, std::generic_category(), "Failed to truncate WAL");
-    }
-    crash_failpoint("wal_reset_after_truncate");
-    if (lseek(fd_, 0, SEEK_SET) == -1) {
-        throw std::system_error(errno, std::generic_category(), "Failed to seek to beginning of WAL after truncate");
-    }
+    try {
+        if (persistence_ftruncate(fd_, 0, "wal_reset_truncate") == -1) {
+            throw std::system_error(errno, std::generic_category(), "Failed to truncate WAL");
+        }
+        crash_failpoint("wal_reset_after_truncate");
+        if (lseek(fd_, 0, SEEK_SET) == -1) {
+            throw std::system_error(errno, std::generic_category(), "Failed to seek to beginning of WAL after truncate");
+        }
 
-    write_wal_header(fd_);
-    crash_failpoint("wal_reset_after_header_write");
-    sync_fd(fd_, "Failed to sync reset WAL", "wal_reset_fsync");
+        write_wal_header(fd_);
+        crash_failpoint("wal_reset_after_header_write");
+        sync_fd(fd_, "Failed to sync reset WAL", "wal_reset_fsync");
 
-    if (lseek(fd_, 0, SEEK_END) == -1) {
-        throw std::system_error(errno, std::generic_category(), "Failed to seek to end of reset WAL");
+        if (lseek(fd_, 0, SEEK_END) == -1) {
+            throw std::system_error(errno, std::generic_category(), "Failed to seek to end of reset WAL");
+        }
+    } catch (...) {
+        failed_ = true;
+        throw;
     }
 }
