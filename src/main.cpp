@@ -4,6 +4,7 @@
 #include "wal.h"
 #include "snapshot.h"
 
+#include <memory>
 #include <thread>
 #include <vector>
 #include <functional>
@@ -52,7 +53,9 @@ void snapshot_worker(Dispatcher& dispatcher) {
     }
 }
 
-int main() {
+namespace {
+
+int run() {
     shutdown_fd = eventfd(0, EFD_NONBLOCK);
     if (shutdown_fd == -1) {
         std::cerr << "Failed to create eventfd" << std::endl;
@@ -76,8 +79,17 @@ int main() {
     }
 
     std::cout << "Initializing Write-Ahead Log..." << std::endl;
-    WAL wal("kvstore.wal");
-    std::vector<Command> recovered_commands = wal.recover();
+    std::unique_ptr<WAL> wal_ptr;
+    std::vector<Command> recovered_commands;
+    try {
+        wal_ptr = std::make_unique<WAL>("kvstore.wal");
+        recovered_commands = wal_ptr->recover();
+    } catch (const std::exception& e) {
+        std::cerr << "WAL recovery failed: " << e.what()
+                  << "\nkvstore.wal was left unchanged; refusing to start." << std::endl;
+        return 1;
+    }
+    WAL& wal = *wal_ptr;
     if (wal.truncated_tail_bytes() != 0) {
         std::cerr << "WAL: discarded " << wal.truncated_tail_bytes()
                   << " bytes of torn tail from an interrupted write." << std::endl;
@@ -114,15 +126,24 @@ int main() {
     threads.reserve(num_threads);
 
     std::atomic<bool> worker_failed{false};
-    for (unsigned int i = 0; i < num_threads; ++i) {
-        threads.emplace_back([&] {
-            if (run_server(dispatcher) != 0) {
-                if (!worker_failed.exchange(true)) {
-                    std::cerr << "Network worker failed; shutting down server." << std::endl;
-                    request_shutdown();
+    try {
+        for (unsigned int i = 0; i < num_threads; ++i) {
+            threads.emplace_back([&] {
+                if (run_server(dispatcher) != 0) {
+                    if (!worker_failed.exchange(true)) {
+                        std::cerr << "Network worker failed; shutting down server." << std::endl;
+                        request_shutdown();
+                    }
                 }
-            }
-        });
+            });
+        }
+    } catch (const std::exception& e) {
+        // Could not start every worker. Stop the ones that did start so no
+        // joinable thread is destroyed, then report through main().
+        request_shutdown();
+        for (auto& t : threads) t.join();
+        snap_thread.join();
+        throw;
     }
 
     for (auto& t : threads) {
@@ -135,4 +156,17 @@ int main() {
     if (shutdown_fd != -1) close(shutdown_fd);
     std::cout << "Server completely shut down." << std::endl;
     return worker_failed ? 1 : 0;
+}
+
+} // namespace
+
+int main() {
+    try {
+        return run();
+    } catch (const std::exception& e) {
+        std::cerr << "kvstore: fatal error: " << e.what() << std::endl;
+    } catch (...) {
+        std::cerr << "kvstore: fatal error: unknown exception" << std::endl;
+    }
+    return 1;
 }

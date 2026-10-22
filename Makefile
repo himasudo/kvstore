@@ -83,7 +83,7 @@ SANITIZED_TESTS = test_wal_recovery-sanitize test_snapshot_recovery-sanitize \
                   test_io_faults-sanitize test_persistence_failpoints-sanitize
 
 PY_TESTS = test_tcp_protocol test_network_stress test_startup_failure test_crash_recovery \
-           test_torn_tail_startup
+           test_torn_tail_startup test_startup_errors
 
 all: kvstore
 
