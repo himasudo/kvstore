@@ -71,6 +71,10 @@ Connections have a bounded input buffer and are closed after 30 seconds of inact
 
 The server listens on port `6379`.
 
+### File handling
+
+`kvstore.wal`, `kvstore.snapshot` and `kvstore.lock` are created with mode 0600. When the WAL is created (or its header is repaired) the directory is fsynced as well as the file, so a crash cannot lose the log's directory entry. A checkpoint that fails removes its temporary snapshot, and a stale `kvstore.snapshot.tmp` from a crash mid-checkpoint is deleted at startup.
+
 ### Data directory lock
 
 The server takes an exclusive `flock` on `kvstore.lock` in the working directory before it opens any other file. A second instance in the same directory prints a message and exits with status 1 instead of sharing (and corrupting) the WAL and snapshot. The kernel releases the lock when the process dies, so a killed server never leaves a stale lock.

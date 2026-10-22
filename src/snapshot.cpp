@@ -1,6 +1,7 @@
 #include "snapshot.h"
 #include "failpoint.h"
 #include "io_fault.h"
+#include "fs_util.h"
 #include <array>
 #include <fcntl.h>
 #include <unistd.h>
@@ -54,30 +55,10 @@ static void sync_fd(int fd, const char* error_message, const char* fault_point) 
     }
 }
 
-static void fsync_parent_directory(const std::string& path) {
-    std::filesystem::path parent = std::filesystem::path(path).parent_path();
-    if (parent.empty()) {
-        parent = ".";
-    }
-
-    int dir_fd = open(parent.c_str(), O_RDONLY | O_DIRECTORY);
-    if (dir_fd == -1) {
-        throw std::system_error(errno, std::generic_category(), "Failed to open snapshot directory");
-    }
-
-    try {
-        sync_fd(dir_fd, "Snapshot directory fsync failed", "snapshot_dir_fsync");
-    } catch (...) {
-        close(dir_fd);
-        throw;
-    }
-    close(dir_fd);
-}
-
 void Snapshot::write(const KVStore& store, const std::string& path) {
     std::vector<std::pair<std::string, std::string>> entries = store.entries();
     std::string tmp_path = path + ".tmp";
-    int fd = open(tmp_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int fd = open(tmp_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
     if (fd == -1) {
         throw std::system_error(errno, std::generic_category(), "Failed to open temporary snapshot file");
     }
@@ -97,19 +78,36 @@ void Snapshot::write(const KVStore& store, const std::string& path) {
         crash_failpoint("snapshot_after_file_fsync");
     } catch (...) {
         close(fd);
+        unlink(tmp_path.c_str());
         throw;
     }
 
-    close(fd);
+    if (close(fd) == -1) {
+        int err = errno;
+        unlink(tmp_path.c_str());
+        throw std::system_error(err, std::generic_category(), "Snapshot close failed");
+    }
 
     if (persistence_rename(
             tmp_path.c_str(), path.c_str(), "snapshot_rename") != 0) {
-        throw std::system_error(errno, std::generic_category(), "Failed to rename snapshot tmp file");
+        int err = errno;
+        unlink(tmp_path.c_str());
+        throw std::system_error(err, std::generic_category(), "Failed to rename snapshot tmp file");
     }
     crash_failpoint("snapshot_after_rename");
 
-    fsync_parent_directory(path);
+    fsync_parent_directory(path, "Snapshot directory fsync failed", "snapshot_dir_fsync");
     crash_failpoint("snapshot_after_dir_fsync");
+}
+
+void Snapshot::discard_stale_temp(const std::string& path) {
+    // A temporary snapshot is only ever a checkpoint that did not finish, so it
+    // is never valid input for recovery.
+    std::string tmp_path = path + ".tmp";
+    if (unlink(tmp_path.c_str()) == -1 && errno != ENOENT) {
+        throw std::system_error(errno, std::generic_category(),
+                                "Failed to remove stale temporary snapshot " + tmp_path);
+    }
 }
 
 void Snapshot::recover(KVStore& store, const std::string& path) {

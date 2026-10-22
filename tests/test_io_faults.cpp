@@ -237,6 +237,9 @@ static void run_checkpoint_fault(const std::string& fault,
         }
 
         assert(threw != expect_success);
+        // Whether the checkpoint succeeded or failed at any stage, it must not
+        // leave its temporary file behind.
+        assert(!std::filesystem::exists(snapshot_path + ".tmp"));
         if (fault.starts_with("wal_")) {
             verify_failed_wal(dispatcher, wal, store, snapshot_path, wal_path);
         }
@@ -302,11 +305,33 @@ static void run_concurrent_injection(bool partial) {
     wait_ok(pid);
 }
 
+// Creating a WAL must sync its directory; a failure there fails construction.
+static void run_wal_creation_dir_fsync_fault(const std::string& wal_path) {
+    std::remove(wal_path.c_str());
+    pid_t pid = fork();
+    assert(pid >= 0);
+    if (pid == 0) {
+        assert(setenv("KVSTORE_IO_FAULT", "wal_dir_fsync_eio", 1) == 0);
+        bool threw = false;
+        try {
+            WAL wal(wal_path);
+        } catch (const std::system_error& e) {
+            threw = e.code().value() == EIO;
+        }
+        assert(threw);
+        _exit(0);
+    }
+    wait_ok(pid);
+    std::remove(wal_path.c_str());
+}
+
 int main() {
     run_concurrent_injection(false);
     run_concurrent_injection(true);
     const auto base = std::filesystem::temp_directory_path() /
         ("kvstore-io-faults-" + std::to_string(getpid()));
+
+    run_wal_creation_dir_fsync_fault(base.string() + "-create-dir-fsync.wal");
 
     run_transient_wal_fault(
         "wal_record_write_short", base.string() + "-short.wal");

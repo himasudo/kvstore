@@ -59,6 +59,10 @@ When writes are batched (group commit), several records can be in flight at once
 WAL files now carry a `KVWL` format header and version number. Record payloads use CRC32C and are verified before decoding. Multi-byte fields in the versioned WAL format are encoded little-endian. Unrecognized magic or format versions are rejected.
 
 
+## File creation durability
+
+A new WAL is not durable until its directory entry is. After writing and syncing the header of a newly created (or header-repaired) WAL, `WAL` also fsyncs the parent directory, so records acknowledged later cannot be lost together with the file's name. Snapshots already did this after the rename. A checkpoint that fails before publishing removes `<snapshot>.tmp`, and startup removes one left by a crash, because a temporary snapshot is never valid recovery input.
+
 ## Snapshot recovery boundaries
 
 Published snapshots are treated as complete checkpoints, not append-only logs. Recovery validates every record before applying any snapshot entry to the store.

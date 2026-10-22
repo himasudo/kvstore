@@ -1,6 +1,7 @@
 #include "wal.h"
 #include "failpoint.h"
 #include "io_fault.h"
+#include "fs_util.h"
 #include <algorithm>
 #include <array>
 #include <fcntl.h>
@@ -62,7 +63,7 @@ static void write_wal_header(int fd) {
 WAL::WAL() : fd_(-1) {}
 
 WAL::WAL(const std::string& path) : fd_(-1) {
-    int fd = open(path.c_str(), O_RDWR | O_CREAT | O_APPEND, 0644);
+    int fd = open(path.c_str(), O_RDWR | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
     if (fd == -1) {
         throw std::runtime_error("Failed to open or create WAL file.");
     }
@@ -79,6 +80,9 @@ WAL::WAL(const std::string& path) : fd_(-1) {
             }
             write_wal_header(fd);
             sync_fd(fd, "WAL header fsync failed", "wal_header_fsync");
+            // The file is new (or was repaired from a torn header): make its
+            // directory entry durable too, or a crash could lose the whole log.
+            fsync_parent_directory(path, "WAL directory fsync failed", "wal_dir_fsync");
         } else {
             if (lseek(fd, 0, SEEK_SET) == -1) {
                 throw std::system_error(errno, std::generic_category(), "Failed to seek to WAL header");

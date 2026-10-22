@@ -81,6 +81,7 @@ int run() {
     std::cout << "Booting Key-Value Server..." << std::endl;
 
     try {
+        Snapshot::discard_stale_temp("kvstore.snapshot");
         std::cout << "Loading snapshot..." << std::endl;
         snapshot.recover(store, "kvstore.snapshot");
         std::cout << "Snapshot loaded. Current store size: " << store.size() << std::endl;
