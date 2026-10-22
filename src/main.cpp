@@ -78,6 +78,10 @@ int main() {
     std::cout << "Initializing Write-Ahead Log..." << std::endl;
     WAL wal("kvstore.wal");
     std::vector<Command> recovered_commands = wal.recover();
+    if (wal.truncated_tail_bytes() != 0) {
+        std::cerr << "WAL: discarded " << wal.truncated_tail_bytes()
+                  << " bytes of torn tail from an interrupted write." << std::endl;
+    }
 
     if (!recovered_commands.empty()) {
         std::cout << "Replaying " << recovered_commands.size() << " commands from WAL directly to store..." << std::endl;

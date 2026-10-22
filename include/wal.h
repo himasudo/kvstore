@@ -23,7 +23,11 @@ class WAL {
         std::vector<Command> recover();
         void reset();
         void ensure_writable() const;
+        // Bytes cut from the end of the file by recover() because the final
+        // record was torn or incomplete. Zero when the log was clean.
+        uint64_t truncated_tail_bytes() const { return truncated_tail_bytes_; }
     private:
         int fd_;
+        uint64_t truncated_tail_bytes_ = 0;
         bool failed_ = false; // Access is serialized by the dispatcher mutation mutex.
 };
