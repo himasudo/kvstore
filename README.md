@@ -13,7 +13,7 @@ kvstore uses an in-memory hash table, a RESP command interface, epoll-based netw
 - **Mutations** — `SET`, `DEL`, and `CLEAR` are serialized through the dispatcher
 - **Persistence** — each mutation is written and synced to the WAL before it is applied in memory
 - **Snapshots** — full-state checkpoint every 60 seconds
-- **Shutdown** — `eventfd` wakes the worker loops on `SIGINT`
+- **Shutdown** — `SIGINT` and `SIGTERM` wake the worker loops through an `eventfd`; `SIGPIPE` is ignored
 
 ## Persistence
 
@@ -70,6 +70,10 @@ Connections retain fragmented RESP requests and process pipelined commands in or
 Connections have a bounded input buffer and are closed after 30 seconds of inactivity.
 
 The server listens on port `6379`.
+
+### Clean shutdown
+
+On `SIGINT` or `SIGTERM` the server stops accepting work, wakes the checkpoint thread immediately, and writes a final snapshot so the WAL is empty at the next start. If the final snapshot fails, the WAL is still complete, so the server warns and still exits 0. A hard kill needs no cleanup: recovery replays the WAL.
 
 ### File handling
 
