@@ -64,6 +64,9 @@ jobs:
       - name: Startup file hygiene
         run: python3 tests/test_startup_files.py ./kvstore
 
+      - name: Signal handling and clean shutdown
+        run: python3 tests/test_signals.py ./kvstore
+
   sanitizers:
     runs-on: ubuntu-latest
 

@@ -5,7 +5,9 @@
 #include "snapshot.h"
 #include "data_lock.h"
 
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <thread>
 #include <vector>
 #include <functional>
@@ -13,6 +15,7 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <signal.h>
 #include <sys/eventfd.h>
 #include <unistd.h>
 
@@ -29,21 +32,35 @@ void request_shutdown() {
     }
 }
 
-void handle_sigint(int) {
+// Async-signal-safe: an atomic store and a write() to the eventfd.
+void handle_shutdown_signal(int) {
     request_shutdown();
+}
+
+namespace {
+
+// Lets main() wake the checkpoint thread at shutdown instead of waiting out its
+// sleep. Not touched from the signal handler (condition variables are not
+// async-signal-safe); main() notifies after the workers have stopped.
+std::mutex snapshot_wait_mutex;
+std::condition_variable snapshot_wait_cv;
+
+void wake_snapshot_worker() {
+    { std::lock_guard<std::mutex> lock(snapshot_wait_mutex); }
+    snapshot_wait_cv.notify_all();
 }
 
 void snapshot_worker(Dispatcher& dispatcher) {
     Snapshot snapshot;
-    const int interval_seconds = 60;
+    const auto interval = std::chrono::seconds(60);
 
+    std::unique_lock<std::mutex> lock(snapshot_wait_mutex);
     while (keep_running) {
-        for (int i = 0; i < interval_seconds && keep_running; ++i) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+        if (snapshot_wait_cv.wait_for(lock, interval, [] { return !keep_running.load(); })) {
+            break;
         }
-        
-        if (!keep_running) break;
 
+        lock.unlock();
         try {
             std::cout << "[Background] Taking snapshot..." << std::endl;
             dispatcher.checkpoint(snapshot, "kvstore.snapshot");
@@ -51,10 +68,9 @@ void snapshot_worker(Dispatcher& dispatcher) {
         } catch (const std::exception& e) {
             std::cerr << "[Background Error] " << e.what() << std::endl;
         }
+        lock.lock();
     }
 }
-
-namespace {
 
 int run() {
     shutdown_fd = eventfd(0, EFD_NONBLOCK);
@@ -63,7 +79,18 @@ int run() {
         return 1;
     }
 
-    std::signal(SIGINT, handle_sigint);
+    // SIGINT and SIGTERM both request a clean shutdown (docker stop and
+    // systemd send SIGTERM). A write to a closed pipe or socket must surface as
+    // an error return, not kill the process.
+    struct sigaction shutdown_action{};
+    shutdown_action.sa_handler = handle_shutdown_signal;
+    sigemptyset(&shutdown_action.sa_mask);
+    if (sigaction(SIGINT, &shutdown_action, nullptr) == -1 ||
+        sigaction(SIGTERM, &shutdown_action, nullptr) == -1) {
+        std::cerr << "Failed to install signal handlers" << std::endl;
+        return 1;
+    }
+    std::signal(SIGPIPE, SIG_IGN);
 
     // Must come before any data file is opened: a second instance sharing the
     // WAL and snapshot would corrupt them (SO_REUSEPORT lets it bind the port).
@@ -154,6 +181,7 @@ int run() {
         // joinable thread is destroyed, then report through main().
         request_shutdown();
         for (auto& t : threads) t.join();
+        wake_snapshot_worker();
         snap_thread.join();
         throw;
     }
@@ -162,9 +190,25 @@ int run() {
         if (t.joinable()) t.join();
     }
     
+    wake_snapshot_worker();
     if (snap_thread.joinable()) {
         snap_thread.join();
     }
+
+    // No client can write any more, so a final checkpoint leaves an empty WAL
+    // and the next start has nothing to replay. If it fails the WAL is still
+    // complete and valid, so this is a warning, not a failed shutdown.
+    if (!worker_failed) {
+        try {
+            std::cout << "Taking final snapshot..." << std::endl;
+            Snapshot final_snapshot;
+            dispatcher.checkpoint(final_snapshot, "kvstore.snapshot");
+            std::cout << "Final snapshot written. WAL truncated." << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "Final snapshot failed (WAL left intact): " << e.what() << std::endl;
+        }
+    }
+
     if (shutdown_fd != -1) close(shutdown_fd);
     std::cout << "Server completely shut down." << std::endl;
     return worker_failed ? 1 : 0;
