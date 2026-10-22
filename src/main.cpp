@@ -3,6 +3,7 @@
 #include "server.h"
 #include "wal.h"
 #include "snapshot.h"
+#include "data_lock.h"
 
 #include <memory>
 #include <thread>
@@ -63,6 +64,16 @@ int run() {
     }
 
     std::signal(SIGINT, handle_sigint);
+
+    // Must come before any data file is opened: a second instance sharing the
+    // WAL and snapshot would corrupt them (SO_REUSEPORT lets it bind the port).
+    std::unique_ptr<DataDirLock> data_lock;
+    try {
+        data_lock = std::make_unique<DataDirLock>("kvstore.lock");
+    } catch (const std::exception& e) {
+        std::cerr << "kvstore: cannot start: " << e.what() << std::endl;
+        return 1;
+    }
 
     KVStore store;
     Snapshot snapshot;

@@ -71,6 +71,10 @@ Connections have a bounded input buffer and are closed after 30 seconds of inact
 
 The server listens on port `6379`.
 
+### Data directory lock
+
+The server takes an exclusive `flock` on `kvstore.lock` in the working directory before it opens any other file. A second instance in the same directory prints a message and exits with status 1 instead of sharing (and corrupting) the WAL and snapshot. The kernel releases the lock when the process dies, so a killed server never leaves a stale lock.
+
 ### Startup failures
 
 If the snapshot or WAL cannot be loaded (corruption with data after it, an unsupported format version, an unopenable file), the server prints the reason to stderr, leaves the files untouched, and exits with status 1.
@@ -114,6 +118,7 @@ Runtime files are created in the working directory:
 ```text
 kvstore.wal
 kvstore.snapshot
+kvstore.lock
 ```
 
 ## Connect

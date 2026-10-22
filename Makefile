@@ -28,7 +28,7 @@ $(foreach v,rel test fp iof asan asan_fp asan_iof tsan netfault,$(eval $(call VA
 
 -include $(wildcard build/*/src/*.d build/*/tests/*.d)
 
-SRC = src/main.cpp src/kvstore.cpp src/parser.cpp src/dispatcher.cpp src/encoder.cpp src/server.cpp src/wal.cpp src/snapshot.cpp src/persistence_format.cpp
+SRC = src/main.cpp src/kvstore.cpp src/parser.cpp src/dispatcher.cpp src/encoder.cpp src/server.cpp src/wal.cpp src/snapshot.cpp src/persistence_format.cpp src/data_lock.cpp
 
 TEST_PIPELINE_SRC = tests/test_pipeline.cpp src/kvstore.cpp src/parser.cpp src/dispatcher.cpp src/encoder.cpp src/wal.cpp src/persistence_format.cpp src/snapshot.cpp
 TEST_RECOVERY_SRC = tests/test_recovery.cpp src/kvstore.cpp src/dispatcher.cpp src/wal.cpp src/persistence_format.cpp src/snapshot.cpp
@@ -40,11 +40,12 @@ TEST_PERSISTENCE_FORMAT_SRC = tests/test_persistence_format.cpp src/persistence_
 TEST_FAILPOINT_SRC = tests/test_persistence_failpoints.cpp src/kvstore.cpp src/dispatcher.cpp src/wal.cpp src/snapshot.cpp src/persistence_format.cpp
 TEST_PARSER_SRC = tests/test_parser_incremental.cpp src/parser.cpp
 TEST_IO_FAULT_SRC = tests/test_io_faults.cpp src/kvstore.cpp src/dispatcher.cpp src/wal.cpp src/snapshot.cpp src/persistence_format.cpp
+TEST_DATA_LOCK_SRC = tests/test_data_lock.cpp src/data_lock.cpp
 
 # name:source-variable pairs for every unit test
 UNIT_TESTS = test_pipeline test_recovery test_mutation_ordering test_checkpoint \
              test_wal_recovery test_snapshot_recovery test_persistence_format \
-             test_persistence_failpoints test_io_faults test_parser_incremental
+             test_persistence_failpoints test_io_faults test_parser_incremental test_data_lock
 
 # $(1)=binary name  $(2)=source list variable  $(3)=variant
 define LINK
@@ -67,6 +68,7 @@ $(eval $(call LINK,test_persistence_format,TEST_PERSISTENCE_FORMAT_SRC,test))
 $(eval $(call LINK,test_persistence_failpoints,TEST_FAILPOINT_SRC,fp))
 $(eval $(call LINK,test_io_faults,TEST_IO_FAULT_SRC,iof))
 $(eval $(call LINK,test_parser_incremental,TEST_PARSER_SRC,test))
+$(eval $(call LINK,test_data_lock,TEST_DATA_LOCK_SRC,test))
 
 $(eval $(call LINK,test_mutation_ordering-tsan,TEST_ORDERING_SRC,tsan))
 $(eval $(call LINK,test_checkpoint-tsan,TEST_CHECKPOINT_SRC,tsan))
@@ -75,15 +77,17 @@ $(eval $(call LINK,test_wal_recovery-sanitize,TEST_WAL_RECOVERY_SRC,asan))
 $(eval $(call LINK,test_snapshot_recovery-sanitize,TEST_SNAPSHOT_RECOVERY_SRC,asan))
 $(eval $(call LINK,test_persistence_format-sanitize,TEST_PERSISTENCE_FORMAT_SRC,asan))
 $(eval $(call LINK,test_parser_incremental-sanitize,TEST_PARSER_SRC,asan))
+$(eval $(call LINK,test_data_lock-sanitize,TEST_DATA_LOCK_SRC,asan))
 $(eval $(call LINK,test_io_faults-sanitize,TEST_IO_FAULT_SRC,asan_iof))
 $(eval $(call LINK,test_persistence_failpoints-sanitize,TEST_FAILPOINT_SRC,asan_fp))
 
 SANITIZED_TESTS = test_wal_recovery-sanitize test_snapshot_recovery-sanitize \
                   test_persistence_format-sanitize test_parser_incremental-sanitize \
-                  test_io_faults-sanitize test_persistence_failpoints-sanitize
+                  test_io_faults-sanitize test_persistence_failpoints-sanitize \
+                  test_data_lock-sanitize
 
 PY_TESTS = test_tcp_protocol test_network_stress test_startup_failure test_crash_recovery \
-           test_torn_tail_startup test_startup_errors
+           test_torn_tail_startup test_startup_errors test_data_dir_lock
 
 all: kvstore
 
