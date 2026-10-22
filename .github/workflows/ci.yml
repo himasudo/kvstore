@@ -53,6 +53,9 @@ jobs:
       - name: Torn WAL tail startup
         run: python3 tests/test_torn_tail_startup.py ./kvstore
 
+      - name: Startup error handling
+        run: python3 tests/test_startup_errors.py ./kvstore
+
   sanitizers:
     runs-on: ubuntu-latest
 

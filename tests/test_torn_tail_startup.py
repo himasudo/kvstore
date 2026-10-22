@@ -109,7 +109,7 @@ def expect_refusal(binary: str, damage, label: str) -> None:
         proc = start(binary, cwd)
         try:
             assert proc.poll() is not None, f"{label}: server started on a corrupt WAL"
-            assert proc.returncode != 0, label
+            assert proc.returncode == 1, f"{label}: exit status {proc.returncode}"
         finally:
             stop(proc, signal.SIGKILL)
     print(f"{label}: refuses to start")
