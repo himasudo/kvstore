@@ -41,11 +41,12 @@ TEST_FAILPOINT_SRC = tests/test_persistence_failpoints.cpp src/kvstore.cpp src/d
 TEST_PARSER_SRC = tests/test_parser_incremental.cpp src/parser.cpp
 TEST_IO_FAULT_SRC = tests/test_io_faults.cpp src/kvstore.cpp src/dispatcher.cpp src/wal.cpp src/snapshot.cpp src/persistence_format.cpp
 TEST_DATA_LOCK_SRC = tests/test_data_lock.cpp src/data_lock.cpp
+TEST_FILE_MODES_SRC = tests/test_file_modes.cpp src/kvstore.cpp src/wal.cpp src/snapshot.cpp src/persistence_format.cpp
 
 # name:source-variable pairs for every unit test
 UNIT_TESTS = test_pipeline test_recovery test_mutation_ordering test_checkpoint \
              test_wal_recovery test_snapshot_recovery test_persistence_format \
-             test_persistence_failpoints test_io_faults test_parser_incremental test_data_lock
+             test_persistence_failpoints test_io_faults test_parser_incremental test_data_lock test_file_modes
 
 # $(1)=binary name  $(2)=source list variable  $(3)=variant
 define LINK
@@ -69,6 +70,7 @@ $(eval $(call LINK,test_persistence_failpoints,TEST_FAILPOINT_SRC,fp))
 $(eval $(call LINK,test_io_faults,TEST_IO_FAULT_SRC,iof))
 $(eval $(call LINK,test_parser_incremental,TEST_PARSER_SRC,test))
 $(eval $(call LINK,test_data_lock,TEST_DATA_LOCK_SRC,test))
+$(eval $(call LINK,test_file_modes,TEST_FILE_MODES_SRC,test))
 
 $(eval $(call LINK,test_mutation_ordering-tsan,TEST_ORDERING_SRC,tsan))
 $(eval $(call LINK,test_checkpoint-tsan,TEST_CHECKPOINT_SRC,tsan))
@@ -78,16 +80,17 @@ $(eval $(call LINK,test_snapshot_recovery-sanitize,TEST_SNAPSHOT_RECOVERY_SRC,as
 $(eval $(call LINK,test_persistence_format-sanitize,TEST_PERSISTENCE_FORMAT_SRC,asan))
 $(eval $(call LINK,test_parser_incremental-sanitize,TEST_PARSER_SRC,asan))
 $(eval $(call LINK,test_data_lock-sanitize,TEST_DATA_LOCK_SRC,asan))
+$(eval $(call LINK,test_file_modes-sanitize,TEST_FILE_MODES_SRC,asan))
 $(eval $(call LINK,test_io_faults-sanitize,TEST_IO_FAULT_SRC,asan_iof))
 $(eval $(call LINK,test_persistence_failpoints-sanitize,TEST_FAILPOINT_SRC,asan_fp))
 
 SANITIZED_TESTS = test_wal_recovery-sanitize test_snapshot_recovery-sanitize \
                   test_persistence_format-sanitize test_parser_incremental-sanitize \
                   test_io_faults-sanitize test_persistence_failpoints-sanitize \
-                  test_data_lock-sanitize
+                  test_data_lock-sanitize test_file_modes-sanitize
 
 PY_TESTS = test_tcp_protocol test_network_stress test_startup_failure test_crash_recovery \
-           test_torn_tail_startup test_startup_errors test_data_dir_lock
+           test_torn_tail_startup test_startup_errors test_data_dir_lock test_startup_files
 
 all: kvstore
 

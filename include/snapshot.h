@@ -14,4 +14,6 @@ class Snapshot {
     public:
         void write(const KVStore& store, const std::string& path);
         void recover(KVStore& store, const std::string& path);
+        // Removes `<path>.tmp` left behind by an interrupted checkpoint.
+        static void discard_stale_temp(const std::string& path);
 };
