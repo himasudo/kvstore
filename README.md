@@ -97,6 +97,8 @@ cd kvstore
 make
 ```
 
+`make` produces an optimized (`-O2`) server binary. Add `STRICT=-Werror` to make warnings fatal in that build. Objects are kept per variant under `build/`, and header changes trigger rebuilds.
+
 ## Run
 
 ```bash
@@ -128,11 +130,13 @@ printf "*3\r\n\$3\r\nSET\r\n\$3\r\nfoo\r\n\$3\r\nbar\r\n" | nc localhost 6379
 
 ## Tests
 
-Build the test binaries:
+Build and run everything (unit tests, TCP integration, crash/restart, network fault injection, stress):
 
 ```bash
-make test
+make check
 ```
+
+Smaller entry points: `make test` builds the unit test binaries, `make check-unit` builds and runs them, `make check-integration` runs the Python server tests, and `make sanitize` runs the ASan/UBSan builds of the parser, record format, WAL, snapshot, I/O-fault and failpoint tests. Test and sanitizer builds always use `-Werror`.
 
 The suite covers the command pipeline, WAL and snapshot recovery, record-format integrity, concurrent mutation ordering, checkpoint/write races, deterministic crash points, injected I/O failures, and malformed or torn persistence records.
 

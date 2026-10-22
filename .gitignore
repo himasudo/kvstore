@@ -1,6 +1,10 @@
 kvstore
-test_pipeline
+build/
+/kvstore-*
+/test_*
 *.o
 *.d
 *.wal
 *.snapshot
+*.snapshot.tmp
+__pycache__/
