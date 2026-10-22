@@ -29,6 +29,7 @@ jobs:
           ./test_persistence_failpoints
           ./test_io_faults
           ./test_parser_incremental
+          ./test_data_lock
 
       - name: TCP protocol integration
         run: python3 tests/test_tcp_protocol.py ./kvstore
@@ -55,6 +56,9 @@ jobs:
 
       - name: Startup error handling
         run: python3 tests/test_startup_errors.py ./kvstore
+
+      - name: Data directory lock
+        run: python3 tests/test_data_dir_lock.py ./kvstore
 
   sanitizers:
     runs-on: ubuntu-latest

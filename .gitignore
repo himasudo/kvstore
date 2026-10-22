@@ -7,4 +7,5 @@ build/
 *.wal
 *.snapshot
 *.snapshot.tmp
+*.lock
 __pycache__/
