@@ -50,6 +50,9 @@ jobs:
       - name: Crash/restart recovery
         run: python3 tests/test_crash_recovery.py ./kvstore
 
+      - name: Torn WAL tail startup
+        run: python3 tests/test_torn_tail_startup.py ./kvstore
+
   sanitizers:
     runs-on: ubuntu-latest
 

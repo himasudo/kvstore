@@ -1,6 +1,7 @@
 #include "wal.h"
 #include "failpoint.h"
 #include "io_fault.h"
+#include <algorithm>
 #include <array>
 #include <fcntl.h>
 #include <unistd.h>
@@ -150,16 +151,50 @@ std::vector<Command> WAL::recover() try {
         throw std::system_error(errno, std::generic_category(), "Failed to seek to first WAL record");
     }
 
-    auto truncate_torn_tail = [this](off_t offset) {
+    const off_t file_size = st.st_size;
+
+    auto truncate_torn_tail = [this, file_size](off_t offset) {
         if (persistence_ftruncate(fd_, offset, "wal_repair_truncate") == -1) {
             throw std::system_error(errno, std::generic_category(), "Failed to truncate torn WAL tail");
         }
         sync_fd(fd_, "Failed to sync repaired WAL", "wal_repair_fsync");
+        truncated_tail_bytes_ += static_cast<uint64_t>(file_size - offset);
+    };
+
+    // True when every byte from `from` to EOF is zero. A crash can extend the
+    // file before the data reaches disk, which leaves exactly this shape.
+    auto rest_is_zero = [this, file_size](off_t from) {
+        std::array<uint8_t, 64 * 1024> buf;
+        off_t pos = from;
+        while (pos < file_size) {
+            size_t want = static_cast<size_t>(
+                std::min<off_t>(file_size - pos, static_cast<off_t>(buf.size())));
+            ssize_t n = pread(fd_, buf.data(), want, pos);
+            if (n == -1) {
+                if (errno == EINTR) continue;
+                throw std::system_error(errno, std::generic_category(), "WAL tail scan failed");
+            }
+            if (n == 0) break;
+            for (ssize_t i = 0; i < n; ++i) {
+                if (buf[static_cast<size_t>(i)] != 0) return false;
+            }
+            pos += n;
+        }
+        return true;
+    };
+
+    auto corrupted = [](const std::string& what, off_t offset) {
+        return std::runtime_error("Corrupted WAL: " + what + " at offset " +
+                                  std::to_string(offset));
     };
 
     off_t offset = static_cast<off_t>(PERSISTENCE_FILE_HEADER_SIZE);
-    const off_t file_size = st.st_size;
 
+    // A record that fails validation is a torn tail, not corruption, when it is
+    // the last thing in the file (or only zero bytes follow it): a crash during
+    // the final, never-acknowledged write can leave it in any of those shapes.
+    // The same failure with more data after it means damage to a record that
+    // may have been acknowledged, so recovery refuses to start.
     while (offset < file_size) {
         off_t remaining = file_size - offset;
         if (remaining < static_cast<off_t>(PERSISTENCE_RECORD_HEADER_SIZE)) {
@@ -169,15 +204,37 @@ std::vector<Command> WAL::recover() try {
 
         std::array<uint8_t, PERSISTENCE_RECORD_HEADER_SIZE> raw_header{};
         read_exact(fd_, raw_header.data(), raw_header.size(), "WAL record header read failed");
-        PersistenceRecordHeader header = decode_record_header(raw_header);
+        PersistenceRecordHeader header{};
+        try {
+            header = decode_record_header(raw_header);
+        } catch (const std::runtime_error&) {
+            if (rest_is_zero(offset)) {
+                truncate_torn_tail(offset);
+                break;
+            }
+            throw corrupted("invalid record header", offset);
+        }
 
-        if (static_cast<uint64_t>(remaining - PERSISTENCE_RECORD_HEADER_SIZE) < header.payload_size) {
+        const uint64_t body_available =
+            static_cast<uint64_t>(remaining - PERSISTENCE_RECORD_HEADER_SIZE);
+        if (body_available < header.payload_size) {
             truncate_torn_tail(offset);
             break;
         }
 
         std::vector<uint8_t> payload(header.payload_size);
         read_exact(fd_, payload.data(), payload.size(), "WAL payload read failed");
+
+        if (crc32c(payload) != header.checksum) {
+            const off_t record_end = offset +
+                static_cast<off_t>(PERSISTENCE_RECORD_HEADER_SIZE + header.payload_size);
+            if (record_end == file_size || rest_is_zero(record_end)) {
+                truncate_torn_tail(offset);
+                break;
+            }
+            throw corrupted("checksum mismatch in a record followed by more data", offset);
+        }
+
         PersistenceRecord record = decode_record_payload(payload, header.checksum);
 
         Command cmd;

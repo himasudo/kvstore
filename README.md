@@ -47,7 +47,7 @@ Startup recovery loads the snapshot first, then replays the WAL.
 
 Snapshot recovery validates the entire file before applying any entries; truncated or malformed published snapshots are rejected without partially mutating the store.
 
-WAL recovery validates record sizes and field boundaries before using them. A partial final WAL record is treated as a torn tail and truncated back to the last complete record. Structurally invalid complete records and unknown opcodes are rejected.
+WAL recovery validates record sizes, checksums, and field boundaries before using them. A final record that is incomplete, fails its checksum, or is zero-filled, and zero padding after the last record, are treated as a torn tail: recovery truncates back to the last good record, fsyncs the repair, and reports how many bytes it discarded. A failed record that has more data after it, an invalid record header followed by non-zero bytes, structurally invalid records with a valid checksum, and unknown opcodes are corruption, and startup refuses to continue.
 
 ### Persistence format
 

@@ -45,7 +45,16 @@ This deliberately favors a simple correctness argument over write availability: 
 
 WAL recovery treats the file as untrusted input. Before allocating a record payload it validates the advertised record size against fixed minimum and maximum bounds. Key/value lengths are then checked against the actual record boundary before any string is constructed.
 
-A partial final header or payload is treated as a torn tail. Recovery truncates the file back to the last complete record and fsyncs that repair. Structural corruption inside a complete record, an unknown opcode, or invalid command-specific fields is treated as corruption rather than silently skipped.
+A partial final header or payload is treated as a torn tail. Recovery truncates the file back to the last complete record and fsyncs that repair.
+
+A crash during the final write can leave that record in other shapes too: full length with a checksum mismatch, zero-filled, or followed by zero padding because the file was extended before the data reached disk. Only one mutation is in flight at a time, so the damaged record was never acknowledged and recovery treats these the same way:
+
+- a record whose checksum fails is a torn tail when it ends at end-of-file or only zero bytes follow it;
+- an invalid record header (size out of bounds) is a torn tail when every byte from it to end-of-file is zero.
+
+The same failures with real data after them are corruption: the damaged record may have been acknowledged, so startup fails instead of silently dropping it and everything after it. Structural errors in a record whose checksum is valid, unknown opcodes, and invalid command-specific fields are always corruption. `WAL::truncated_tail_bytes()` reports how much was cut.
+
+When writes are batched (group commit), several records can be in flight at once, so this rule will need to accept a damaged run of records at the end instead of a single record.
 
 WAL files now carry a `KVWL` format header and version number. Record payloads use CRC32C and are verified before decoding. Multi-byte fields in the versioned WAL format are encoded little-endian. Unrecognized magic or format versions are rejected.
 

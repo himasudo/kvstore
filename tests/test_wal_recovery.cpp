@@ -45,6 +45,24 @@ static off_t file_size(const std::string& path) {
     return st.st_size;
 }
 
+static void flip_byte(const std::string& path, off_t pos) {
+    int fd = open(path.c_str(), O_RDWR);
+    assert(fd != -1);
+    uint8_t byte = 0;
+    assert(pread(fd, &byte, 1, pos) == 1);
+    byte ^= 0x01;
+    assert(pwrite(fd, &byte, 1, pos) == 1);
+    close(fd);
+}
+
+static void zero_range(const std::string& path, off_t pos, size_t size) {
+    int fd = open(path.c_str(), O_RDWR);
+    assert(fd != -1);
+    const std::vector<uint8_t> zeros(size, 0);
+    assert(pwrite(fd, zeros.data(), zeros.size(), pos) == static_cast<ssize_t>(size));
+    close(fd);
+}
+
 static void expect_corruption(const std::string& path) {
     bool threw = false;
     try {
@@ -118,26 +136,108 @@ int main() {
     assert(file_size(torn_path) == valid_size);
     std::remove(torn_path.c_str());
 
-    const std::string bad_checksum_path = base.string() + "-bad-checksum.wal";
-    std::remove(bad_checksum_path.c_str());
+    // A damaged record that is the only thing after the file header is the
+    // final record: it is a torn tail, so recovery drops it and keeps going.
+    const std::string only_record_path = base.string() + "-only-record-damaged.wal";
+    std::remove(only_record_path.c_str());
     {
-        WAL wal(bad_checksum_path);
+        WAL wal(only_record_path);
         wal.write_ahead(OPCODE_SET, "key", "value");
     }
+    flip_byte(only_record_path, static_cast<off_t>(
+        PERSISTENCE_FILE_HEADER_SIZE + PERSISTENCE_RECORD_HEADER_SIZE + 6));
     {
-        int fd = open(bad_checksum_path.c_str(), O_RDWR);
-        assert(fd != -1);
-        off_t pos = static_cast<off_t>(PERSISTENCE_FILE_HEADER_SIZE + PERSISTENCE_RECORD_HEADER_SIZE + 6);
-        assert(lseek(fd, pos, SEEK_SET) == pos);
-        uint8_t byte;
-        assert(read(fd, &byte, 1) == 1);
-        byte ^= 0x01;
-        assert(lseek(fd, pos, SEEK_SET) == pos);
-        assert(write(fd, &byte, 1) == 1);
-        close(fd);
+        WAL wal(only_record_path);
+        assert(wal.recover().empty());
+        assert(wal.truncated_tail_bytes() > 0);
     }
-    expect_corruption(bad_checksum_path);
-    std::remove(bad_checksum_path.c_str());
+    assert(file_size(only_record_path) == static_cast<off_t>(PERSISTENCE_FILE_HEADER_SIZE));
+    std::remove(only_record_path.c_str());
+
+    // Two valid records: A at [8, 27), B at [27, 46).
+    const std::string tail_path = base.string() + "-tail.wal";
+    auto make_two_records = [&] {
+        std::remove(tail_path.c_str());
+        WAL wal(tail_path);
+        wal.write_ahead(OPCODE_SET, "a", "1");
+        wal.write_ahead(OPCODE_SET, "b", "2");
+    };
+    make_two_records();
+    const off_t end_of_a = file_size(tail_path) - 19;
+    const off_t end_of_b = file_size(tail_path);
+    assert(end_of_a == 27 && end_of_b == 46);
+
+    // Final record damaged in the ways a crash can leave it.
+    struct TornTail {
+        const char* name;
+        void (*damage)(const std::string&, off_t end_of_a, off_t end_of_b);
+    };
+    const TornTail torn_tails[] = {
+        {"last byte flipped", [](const std::string& p, off_t, off_t end_of_b) {
+            flip_byte(p, end_of_b - 1); }},
+        {"final record zero-filled", [](const std::string& p, off_t end_of_a, off_t end_of_b) {
+            zero_range(p, end_of_a, static_cast<size_t>(end_of_b - end_of_a)); }},
+        {"final payload zero-filled", [](const std::string& p, off_t end_of_a, off_t end_of_b) {
+            zero_range(p, end_of_a + PERSISTENCE_RECORD_HEADER_SIZE,
+                       static_cast<size_t>(end_of_b - end_of_a - PERSISTENCE_RECORD_HEADER_SIZE)); }},
+        {"bad checksum then zero padding", [](const std::string& p, off_t, off_t end_of_b) {
+            flip_byte(p, end_of_b - 2);
+            const std::vector<uint8_t> zeros(32, 0);
+            append_bytes(p, zeros.data(), zeros.size()); }},
+    };
+    for (const auto& torn : torn_tails) {
+        make_two_records();
+        torn.damage(tail_path, end_of_a, end_of_b);
+        {
+            WAL wal(tail_path);
+            auto commands = wal.recover();
+            assert(commands.size() == 1);
+            assert(commands[0].args[0] == "a");
+            assert(wal.truncated_tail_bytes() > 0);
+        }
+        assert(file_size(tail_path) == end_of_a);
+
+        // The repaired log accepts new records and replays them in order.
+        {
+            WAL wal(tail_path);
+            (void)wal.recover();
+            wal.write_ahead(OPCODE_SET, "c", "3");
+        }
+        WAL wal(tail_path);
+        auto commands = wal.recover();
+        assert(commands.size() == 2);
+        assert(commands[0].args[0] == "a" && commands[1].args[0] == "c");
+        assert(wal.truncated_tail_bytes() == 0);
+    }
+
+    // Zero bytes after intact records (file extended, data never written).
+    make_two_records();
+    {
+        const std::vector<uint8_t> zeros(64, 0);
+        append_bytes(tail_path, zeros.data(), zeros.size());
+    }
+    {
+        WAL wal(tail_path);
+        assert(wal.recover().size() == 2);
+        assert(wal.truncated_tail_bytes() == 64);
+    }
+    assert(file_size(tail_path) == end_of_b);
+
+    // Damage with more real data after it is corruption, not a torn tail.
+    make_two_records();
+    flip_byte(tail_path, static_cast<off_t>(
+        PERSISTENCE_FILE_HEADER_SIZE + PERSISTENCE_RECORD_HEADER_SIZE + 2));
+    expect_corruption(tail_path);
+    assert(file_size(tail_path) == end_of_b);
+
+    // An invalid record header followed by non-zero bytes is corruption.
+    make_two_records();
+    {
+        const uint8_t junk[] = {0, 0, 0, 0, 1, 2, 3, 4};
+        append_bytes(tail_path, junk, sizeof(junk));
+    }
+    expect_corruption(tail_path);
+    std::remove(tail_path.c_str());
 
     const std::string oversized_path = base.string() + "-oversized.wal";
     std::remove(oversized_path.c_str());
